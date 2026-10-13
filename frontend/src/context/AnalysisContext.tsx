@@ -113,8 +113,8 @@ interface AnalysisContextType {
 const AnalysisContext = createContext<AnalysisContextType | undefined>(undefined)
 
 export const AnalysisProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [currentTab, setCurrentTab] = useState<NavigationTab>('overview')
-  const [researchSubTab, setResearchSubTab] = useState<ResearchSubTab>('performance')
+  const [currentTab, setCurrentTab] = useState<NavigationTab>('clinical_overview')
+  const [researchSubTab, setResearchSubTab] = useState<ResearchSubTab>('explainability')
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null)
   const [selectedStudyId, setSelectedStudyId] = useState<string | null>(null)
   const [selectedStudy, setSelectedStudy] = useState<ECGStudy | null>(null)

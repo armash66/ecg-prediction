@@ -6,14 +6,17 @@ import {
   Edit2,
   Trash2,
   Activity,
-  FileText,
   Clock,
+  FileText,
+  Calendar,
+  AlertCircle,
+  CheckCircle2,
+  ChevronRight,
   X,
   RefreshCw,
   Plus,
-  ArrowRight,
 } from 'lucide-react'
-import { Patient, ECGStudy } from '../types'
+import { Patient, ECGStudy, Encounter, ClinicalNote, ClinicalReport } from '../types'
 import {
   fetchPatients,
   fetchPatientDetail,
@@ -22,17 +25,20 @@ import {
   deletePatient,
   createStudy,
 } from '../api'
+import { useAnalysis } from '../context/AnalysisContext'
 
 interface PatientsViewProps {
   onOpenStudyForReview: (studyId: string, patientId?: string) => void
 }
 
-type PatientTab = 'summary' | 'studies' | 'notes_history'
+type PatientTab = 'summary' | 'history' | 'studies' | 'encounters' | 'notes' | 'reports'
 
 export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview }) => {
   const [patients, setPatients] = useState<Patient[]>([])
   const [loading, setLoading] = useState<boolean>(true)
   const [searchQuery, setSearchQuery] = useState<string>('')
+  const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [sortBy, setSortBy] = useState<string>('updated_at')
 
   // Selected Patient Chart
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
@@ -51,6 +57,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
   const [formAge, setFormAge] = useState<string>('')
   const [formSex, setFormSex] = useState<string>('Male')
   const [formMrn, setFormMrn] = useState<string>('')
+  const [formContact, setFormContact] = useState<string>('')
   const [formHistory, setFormHistory] = useState<string>('')
   const [formAllergies, setFormAllergies] = useState<string>('NKDA')
   const [formMedications, setFormMedications] = useState<string>('')
@@ -64,12 +71,8 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
   const loadPatientsList = async () => {
     try {
       setLoading(true)
-      const res = await fetchPatients(searchQuery, 'all', 'updated_at', 'desc')
+      const res = await fetchPatients(searchQuery, statusFilter, sortBy, 'desc')
       setPatients(res.patients)
-      // Auto-select first patient if none selected
-      if (!selectedPatient && res.patients.length > 0) {
-        openPatientChart(res.patients[0].id)
-      }
     } catch (err) {
       console.error('Failed to load patients list:', err)
     } finally {
@@ -79,13 +82,14 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
 
   useEffect(() => {
     loadPatientsList()
-  }, [searchQuery])
+  }, [searchQuery, statusFilter, sortBy])
 
   const openPatientChart = async (patId: string) => {
     try {
       setChartLoading(true)
       const detail = await fetchPatientDetail(patId)
       setSelectedPatient(detail)
+      setActiveTab('summary')
     } catch (err) {
       console.error('Failed to open patient chart:', err)
     } finally {
@@ -96,9 +100,10 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!formName.trim()) {
-      setFormError('Patient full name is required.')
+      setFormError('Patient name is required.')
       return
     }
+
     try {
       setFormSubmitting(true)
       setFormError(null)
@@ -108,14 +113,17 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
         age: formAge ? parseInt(formAge, 10) : undefined,
         sex: formSex,
         mrn: formMrn.trim(),
+        contact: formContact.trim(),
         clinical_history: formHistory.trim(),
         allergies: formAllergies.trim(),
         medications: formMedications.trim(),
         notes: formNotes.trim(),
+        status: 'active',
       })
       setShowRegisterModal(false)
+      resetForm()
       await loadPatientsList()
-      await openPatientChart(newPat.id)
+      setSelectedPatient(newPat)
     } catch (err: any) {
       setFormError(err?.message || 'Failed to register patient.')
     } finally {
@@ -126,6 +134,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
   const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedPatient) return
+
     try {
       setFormSubmitting(true)
       setFormError(null)
@@ -135,6 +144,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
         age: formAge ? parseInt(formAge, 10) : undefined,
         sex: formSex,
         mrn: formMrn.trim(),
+        contact: formContact.trim(),
         clinical_history: formHistory.trim(),
         allergies: formAllergies.trim(),
         medications: formMedications.trim(),
@@ -173,7 +183,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
         assigned_clinician: 'Attending Clinician',
       })
       setShowAttachECGModal(false)
-      await openPatientChart(selectedPatient.id)
+      openPatientChart(selectedPatient.id)
       onOpenStudyForReview(newStudy.id, selectedPatient.id)
     } catch (err: any) {
       alert(err?.message || 'Failed to create ECG study.')
@@ -188,6 +198,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
     setFormAge(p.age ? String(p.age) : '')
     setFormSex(p.sex || 'Male')
     setFormMrn(p.mrn || '')
+    setFormContact(p.contact || '')
     setFormHistory(p.clinical_history || '')
     setFormAllergies(p.allergies || 'NKDA')
     setFormMedications(p.medications || '')
@@ -202,6 +213,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
     setFormAge('')
     setFormSex('Male')
     setFormMrn('')
+    setFormContact('')
     setFormHistory('')
     setFormAllergies('NKDA')
     setFormMedications('')
@@ -210,20 +222,23 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
   }
 
   return (
-    <div style={{ display: 'flex', gap: '20px', maxWidth: '1200px', margin: '0 auto', minHeight: '640px' }}>
-      {/* Left Column: Patient Directory */}
+    <div style={{ display: 'flex', gap: '24px', maxWidth: '1400px', margin: '0 auto', height: 'calc(100vh - 120px)' }}>
+      {/* Left Column: Patient Directory / List */}
       <div
         className="card"
         style={{
-          width: '320px',
+          width: '420px',
           display: 'flex',
           flexDirection: 'column',
-          padding: '16px',
+          padding: '20px',
           flexShrink: 0,
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-          <h3 style={{ fontSize: '15px', fontWeight: 600, color: '#252525', margin: 0 }}>Patients</h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <div>
+            <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#252525', margin: 0 }}>Patients Directory</h3>
+            <span style={{ fontSize: '12px', color: '#777773' }}>{patients.length} registered records</span>
+          </div>
           <button
             className="btn btn-primary btn-sm"
             onClick={() => {
@@ -231,37 +246,62 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
               setShowRegisterModal(true)
             }}
           >
-            <UserPlus size={13} />
-            <span>Add</span>
+            <UserPlus size={14} />
+            <span>New</span>
           </button>
         </div>
 
-        <div style={{ position: 'relative', marginBottom: '12px' }}>
-          <Search size={13} style={{ position: 'absolute', left: '9px', top: '9px', color: '#777773' }} />
-          <input
-            type="text"
-            placeholder="Search patients..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            style={{
-              padding: '6px 10px 6px 28px',
-              fontSize: '12px',
-              borderRadius: '6px',
-              border: '1px solid #E8E6E1',
-              background: '#FAFAF8',
-              width: '100%',
-            }}
-          />
+        {/* Search & Filter Bar */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
+          <div style={{ position: 'relative' }}>
+            <Search size={14} style={{ position: 'absolute', left: '10px', top: '10px', color: '#777773' }} />
+            <input
+              type="text"
+              placeholder="Search by name, ID, or MRN..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '8px 10px 8px 32px',
+                fontSize: '13px',
+                borderRadius: '6px',
+                border: '1px solid #E8E6E1',
+                background: '#FAFAF8',
+              }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              style={{
+                flex: 1,
+                padding: '6px 8px',
+                fontSize: '12px',
+                borderRadius: '6px',
+                border: '1px solid #E8E6E1',
+                background: '#FFFFFF',
+              }}
+            >
+              <option value="updated_at">Sort: Recent Activity</option>
+              <option value="name">Sort: Name (A-Z)</option>
+              <option value="patient_id">Sort: Patient ID</option>
+              <option value="created_at">Sort: Registration Date</option>
+            </select>
+          </div>
         </div>
 
-        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        {/* Patients List Items */}
+        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {loading ? (
-            <div style={{ padding: '24px', textAlign: 'center', color: '#777773', fontSize: '12px' }}>
-              Loading...
+            <div style={{ textAlign: 'center', padding: '30px', color: '#777773', fontSize: '13px' }}>
+              <RefreshCw size={18} className="spin-animation" style={{ margin: '0 auto 8px' }} />
+              Loading patients...
             </div>
           ) : patients.length === 0 ? (
-            <div style={{ padding: '24px', textAlign: 'center', color: '#777773', fontSize: '12px' }}>
-              No patients found.
+            <div style={{ textAlign: 'center', padding: '30px', color: '#777773', fontSize: '13px' }}>
+              No patients matching search criteria.
             </div>
           ) : (
             patients.map((pat) => {
@@ -271,19 +311,28 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
                   key={pat.id}
                   onClick={() => openPatientChart(pat.id)}
                   style={{
-                    padding: '10px 12px',
-                    borderRadius: '6px',
+                    padding: '12px 14px',
+                    borderRadius: '8px',
                     border: `1px solid ${isSelected ? '#A83245' : '#E8E6E1'}`,
                     background: isSelected ? '#F8EAED' : '#FFFFFF',
                     cursor: 'pointer',
-                    transition: 'all 0.1s ease',
+                    transition: 'all 0.15s ease',
                   }}
                 >
-                  <div style={{ fontWeight: 600, fontSize: '13px', color: isSelected ? '#A83245' : '#252525' }}>
-                    {pat.name}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <span style={{ fontWeight: 600, fontSize: '14px', color: isSelected ? '#A83245' : '#252525' }}>
+                      {pat.name}
+                    </span>
+                    <code style={{ fontSize: '11px', color: '#777773', background: '#F0EEE9', padding: '1px 5px', borderRadius: '4px' }}>
+                      {pat.patient_id}
+                    </code>
                   </div>
-                  <div style={{ fontSize: '11px', color: '#777773', marginTop: '2px' }}>
-                    {pat.patient_id} {pat.mrn ? `\u2022 MRN: ${pat.mrn}` : ''}
+                  <div style={{ fontSize: '12px', color: '#777773', marginTop: '4px' }}>
+                    {pat.age ? `${pat.age} yrs` : 'Age N/A'} \u2022 {pat.sex} {pat.mrn ? `\u2022 MRN: ${pat.mrn}` : ''}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '11px', color: '#9C9C96' }}>
+                    <span>{pat.study_count || 0} ECG studies</span>
+                    <span>{pat.encounter_count || 0} encounters</span>
                   </div>
                 </div>
               )
@@ -292,7 +341,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
         </div>
       </div>
 
-      {/* Right Column: Clean Patient Record */}
+      {/* Right Column: Selected Patient Chart */}
       <div
         className="card"
         style={{
@@ -303,56 +352,39 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
           overflow: 'hidden',
         }}
       >
-        {chartLoading ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '300px', color: '#777773', fontSize: '13px' }}>
-            <RefreshCw size={18} className="spin-animation" style={{ color: '#A83245', marginRight: '8px' }} />
-            Loading chart...
-          </div>
-        ) : !selectedPatient ? (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '300px', color: '#777773' }}>
-            <Users size={32} style={{ opacity: 0.3, marginBottom: '12px' }} />
-            <div style={{ fontSize: '14px', fontWeight: 500, color: '#252525' }}>Select a patient to view chart</div>
+        {!selectedPatient ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#777773' }}>
+            <Users size={48} style={{ opacity: 0.3, marginBottom: '16px' }} />
+            <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>No Patient Chart Open</h3>
+            <p style={{ fontSize: '13px' }}>Select a patient from the directory on the left or register a new patient.</p>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-            {/* Clean Patient Header */}
+            {/* Chart Header */}
             <div
               style={{
-                padding: '16px 20px',
+                padding: '20px 24px',
                 borderBottom: '1px solid #E8E6E1',
                 background: '#FAFAF8',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
-                flexWrap: 'wrap',
-                gap: '12px',
               }}
             >
               <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <h2 style={{ fontSize: '17px', fontWeight: 600, color: '#252525', margin: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#252525', margin: 0 }}>
                     {selectedPatient.name}
                   </h2>
-                  <span style={{ fontSize: '12px', color: '#777773', background: '#F0EFEA', padding: '2px 6px', borderRadius: '4px' }}>
+                  <code style={{ fontSize: '12px', color: '#A83245', background: '#F8EAED', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>
                     {selectedPatient.patient_id}
-                  </span>
+                  </code>
                 </div>
-                <div style={{ fontSize: '12px', color: '#777773', marginTop: '4px', display: 'flex', gap: '12px' }}>
-                  <span>{selectedPatient.age ? `${selectedPatient.age} yrs` : 'Age N/A'}</span>
-                  <span>\u2022</span>
-                  <span>{selectedPatient.sex}</span>
-                  {selectedPatient.dob && (
-                    <>
-                      <span>\u2022</span>
-                      <span>DOB: {selectedPatient.dob}</span>
-                    </>
-                  )}
-                  {selectedPatient.mrn && (
-                    <>
-                      <span>\u2022</span>
-                      <span>MRN: {selectedPatient.mrn}</span>
-                    </>
-                  )}
+                <div style={{ fontSize: '12px', color: '#777773', marginTop: '4px', display: 'flex', gap: '16px' }}>
+                  <span><b>Age:</b> {selectedPatient.age ?? 'N/A'} yrs</span>
+                  <span><b>Sex:</b> {selectedPatient.sex}</span>
+                  {selectedPatient.dob && <span><b>DOB:</b> {selectedPatient.dob}</span>}
+                  {selectedPatient.mrn && <span><b>MRN:</b> {selectedPatient.mrn}</span>}
                 </div>
               </div>
 
@@ -360,50 +392,53 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
                 <button
                   className="btn btn-secondary btn-sm"
                   onClick={() => setShowAttachECGModal(true)}
-                  title="Attach ECG"
+                  title="Create and attach an ECG study to this patient"
                 >
-                  <Plus size={13} style={{ color: '#A83245' }} />
+                  <Plus size={14} style={{ color: '#A83245' }} />
                   <span>Attach ECG</span>
                 </button>
                 <button
                   className="btn btn-secondary btn-sm"
                   onClick={() => openEditModalForPatient(selectedPatient)}
-                  title="Edit details"
+                  title="Edit patient details"
                 >
-                  <Edit2 size={13} />
-                  <span>Edit</span>
+                  <Edit2 size={14} />
+                  <span>Edit Chart</span>
                 </button>
                 <button
-                  className="btn btn-ghost btn-sm"
+                  className="btn btn-secondary btn-sm"
                   onClick={() => setShowDeleteModal(true)}
                   style={{ color: '#B33A3A' }}
-                  title="Delete patient"
+                  title="Safely delete patient record and history"
                 >
-                  <Trash2 size={13} />
+                  <Trash2 size={14} />
                 </button>
               </div>
             </div>
 
-            {/* 3 Clear Tabs: Summary, ECG Studies, Notes & History */}
+            {/* Chart Navigation Tabs */}
             <div
               style={{
                 display: 'flex',
                 borderBottom: '1px solid #E8E6E1',
-                padding: '0 20px',
+                padding: '0 24px',
                 background: '#FFFFFF',
-                gap: '6px',
+                gap: '8px',
               }}
             >
               {[
                 { id: 'summary' as PatientTab, label: 'Summary' },
+                { id: 'history' as PatientTab, label: 'Medical History' },
                 { id: 'studies' as PatientTab, label: `ECG Studies (${selectedPatient.studies?.length || 0})` },
-                { id: 'notes_history' as PatientTab, label: 'Notes & History' },
+                { id: 'encounters' as PatientTab, label: `Encounters (${selectedPatient.encounters?.length || 0})` },
+                { id: 'notes' as PatientTab, label: `Clinical Notes (${selectedPatient.clinical_notes?.length || 0})` },
+                { id: 'reports' as PatientTab, label: `Reports (${selectedPatient.reports?.length || 0})` },
               ].map((tab) => (
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
                   style={{
-                    padding: '10px 14px',
+                    padding: '12px 14px',
                     fontSize: '13px',
                     fontWeight: activeTab === tab.id ? 600 : 500,
                     color: activeTab === tab.id ? '#A83245' : '#777773',
@@ -411,6 +446,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
                     borderBottom: `2px solid ${activeTab === tab.id ? '#A83245' : 'transparent'}`,
                     background: 'transparent',
                     cursor: 'pointer',
+                    transition: 'all 0.15s ease',
                   }}
                 >
                   {tab.label}
@@ -419,139 +455,212 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
             </div>
 
             {/* Tab Contents */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
               {activeTab === 'summary' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  {/* Latest ECG Preview */}
+                  <div className="card" style={{ padding: '18px 20px', background: '#FAFAF8' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 700, color: '#252525', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        Latest 12-Lead ECG Study
+                      </span>
+                      {selectedPatient.studies && selectedPatient.studies.length > 0 && (
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => onOpenStudyForReview(selectedPatient.studies![0].id, selectedPatient.id)}
+                        >
+                          <Activity size={14} />
+                          <span>Open in Review Workspace</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {selectedPatient.studies && selectedPatient.studies.length > 0 ? (
+                      <div>
+                        <div style={{ display: 'flex', gap: '16px', fontSize: '13px', marginBottom: '10px' }}>
+                          <span><b>Study ID:</b> {selectedPatient.studies[0].study_id}</span>
+                          <span><b>Recorded:</b> {selectedPatient.studies[0].recorded_at?.slice(0, 16)}</span>
+                          <span><b>Status:</b> <span style={{ textTransform: 'capitalize' }}>{selectedPatient.studies[0].status.replace('_', ' ')}</span></span>
+                        </div>
+                        {selectedPatient.studies[0].flags && selectedPatient.studies[0].flags.length > 0 && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px' }}>
+                            <span style={{ fontSize: '12px', fontWeight: 600, color: '#777773' }}>Detected Flags:</span>
+                            {selectedPatient.studies[0].flags.map((fl: string) => (
+                              <span key={fl} style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: '#FDEEEE', color: '#B33A3A' }}>
+                                {fl}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div style={{ color: '#777773', fontSize: '13px' }}>
+                        No ECG studies recorded yet for this patient. Click "Attach ECG" to record an acquisition.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Clinical Background Grid */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                     <div className="card" style={{ padding: '16px' }}>
-                      <div style={{ fontSize: '12px', fontWeight: 600, color: '#777773', textTransform: 'uppercase', marginBottom: '8px' }}>
-                        Clinical History
+                      <div style={{ fontSize: '12px', fontWeight: 700, color: '#777773', textTransform: 'uppercase', marginBottom: '8px' }}>
+                        Documented Cardiovascular History
                       </div>
-                      <div style={{ fontSize: '13px', color: '#252525', lineHeight: 1.5 }}>
-                        {selectedPatient.clinical_history || 'No recorded prior cardiac conditions.'}
+                      <div style={{ fontSize: '13px', color: '#252525', whiteSpace: 'pre-wrap' }}>
+                        {selectedPatient.clinical_history || 'No prior cardiovascular conditions recorded.'}
                       </div>
                     </div>
 
                     <div className="card" style={{ padding: '16px' }}>
-                      <div style={{ fontSize: '12px', fontWeight: 600, color: '#777773', textTransform: 'uppercase', marginBottom: '8px' }}>
-                        Medications & Allergies
+                      <div style={{ fontSize: '12px', fontWeight: 700, color: '#777773', textTransform: 'uppercase', marginBottom: '8px' }}>
+                        Allergies & Current Medications
                       </div>
-                      <div style={{ fontSize: '13px', color: '#252525', lineHeight: 1.5 }}>
-                        <div><b>Medications:</b> {selectedPatient.medications || 'None recorded'}</div>
-                        <div style={{ marginTop: '6px' }}><b>Allergies:</b> {selectedPatient.allergies || 'NKDA'}</div>
+                      <div style={{ fontSize: '13px', color: '#252525', marginBottom: '8px' }}>
+                        <b>Allergies:</b> {selectedPatient.allergies || 'NKDA'}
+                      </div>
+                      <div style={{ fontSize: '13px', color: '#252525' }}>
+                        <b>Medications:</b> {selectedPatient.medications || 'None documented'}
                       </div>
                     </div>
                   </div>
+                </div>
+              )}
 
-                  {selectedPatient.notes && (
-                    <div className="card" style={{ padding: '16px' }}>
-                      <div style={{ fontSize: '12px', fontWeight: 600, color: '#777773', textTransform: 'uppercase', marginBottom: '8px' }}>
-                        Clinical Notes
-                      </div>
-                      <div style={{ fontSize: '13px', color: '#252525', lineHeight: 1.5 }}>
-                        {selectedPatient.notes}
-                      </div>
-                    </div>
-                  )}
+              {activeTab === 'history' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div className="card" style={{ padding: '18px' }}>
+                    <h4 style={{ fontSize: '14px', fontWeight: 700, color: '#252525', marginBottom: '10px' }}>Medical History</h4>
+                    <p style={{ fontSize: '13px', color: '#252525', whiteSpace: 'pre-wrap' }}>{selectedPatient.clinical_history || 'None documented.'}</p>
+                  </div>
+                  <div className="card" style={{ padding: '18px' }}>
+                    <h4 style={{ fontSize: '14px', fontWeight: 700, color: '#252525', marginBottom: '10px' }}>Current Medications</h4>
+                    <p style={{ fontSize: '13px', color: '#252525', whiteSpace: 'pre-wrap' }}>{selectedPatient.medications || 'None documented.'}</p>
+                  </div>
+                  <div className="card" style={{ padding: '18px' }}>
+                    <h4 style={{ fontSize: '14px', fontWeight: 700, color: '#252525', marginBottom: '10px' }}>Known Allergies</h4>
+                    <p style={{ fontSize: '13px', color: '#252525' }}>{selectedPatient.allergies || 'None documented.'}</p>
+                  </div>
+                  <div className="card" style={{ padding: '18px' }}>
+                    <h4 style={{ fontSize: '14px', fontWeight: 700, color: '#252525', marginBottom: '10px' }}>Clinician Chart Notes</h4>
+                    <p style={{ fontSize: '13px', color: '#252525', whiteSpace: 'pre-wrap' }}>{selectedPatient.notes || 'No general notes.'}</p>
+                  </div>
                 </div>
               )}
 
               {activeTab === 'studies' && (
-                <div>
-                  {!selectedPatient.studies || selectedPatient.studies.length === 0 ? (
-                    <div style={{ padding: '32px', textAlign: 'center', color: '#777773', fontSize: '13px' }}>
-                      No ECG studies attached yet. Click "Attach ECG" above to create one.
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {(!selectedPatient.studies || selectedPatient.studies.length === 0) ? (
+                    <div style={{ color: '#777773', fontSize: '13px', textAlign: 'center', padding: '36px' }}>
+                      No ECG studies attached to this patient record.
                     </div>
                   ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {selectedPatient.studies.map((study) => (
-                        <div
-                          key={study.id}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            padding: '12px 16px',
-                            borderRadius: '6px',
-                            border: '1px solid #E8E6E1',
-                            background: '#FAFAF8',
-                          }}
-                        >
-                          <div>
-                            <div style={{ fontSize: '13px', fontWeight: 600, color: '#252525' }}>
-                              {study.study_id}
-                            </div>
-                            <div style={{ fontSize: '11px', color: '#777773' }}>
-                              {study.created_at ? new Date(study.created_at).toLocaleDateString() : '—'} \u2022 Status: {study.status}
-                            </div>
+                    selectedPatient.studies.map((s) => (
+                      <div
+                        key={s.id}
+                        className="card"
+                        style={{
+                          padding: '14px 18px',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                        }}
+                      >
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontWeight: 700, fontSize: '14px', color: '#252525' }}>{s.study_id}</span>
+                            <span style={{ fontSize: '11px', color: '#777773' }}>Acquired: {s.recorded_at?.slice(0, 16)}</span>
+                            <span style={{ fontSize: '11px', padding: '2px 6px', borderRadius: '4px', background: '#F0EFEA' }}>
+                              {s.status.replace('_', ' ')}
+                            </span>
                           </div>
+                          <div style={{ fontSize: '12px', color: '#777773', marginTop: '4px' }}>
+                            Model: {s.selected_model} \u2022 Quality: {s.quality_status} ({s.quality_score})
+                          </div>
+                        </div>
 
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <button
                             className="btn btn-primary btn-sm"
-                            onClick={() => onOpenStudyForReview(study.id, selectedPatient.id)}
-                            style={{ fontSize: '12px' }}
+                            onClick={() => onOpenStudyForReview(s.id, selectedPatient.id)}
                           >
-                            <Activity size={13} />
-                            <span>Review ECG</span>
+                            <Activity size={14} />
+                            <span>Review Waveform</span>
                           </button>
                         </div>
-                      ))}
-                    </div>
+                      </div>
+                    ))
                   )}
                 </div>
               )}
 
-              {activeTab === 'notes_history' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  {/* Encounters */}
-                  <div>
-                    <h4 style={{ fontSize: '13px', fontWeight: 600, color: '#777773', textTransform: 'uppercase', margin: '0 0 8px' }}>
-                      Encounters & Visits
-                    </h4>
-                    {!selectedPatient.encounters || selectedPatient.encounters.length === 0 ? (
-                      <div style={{ fontSize: '13px', color: '#777773' }}>No encounters recorded.</div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {selectedPatient.encounters.map((enc) => (
-                          <div key={enc.id} className="card" style={{ padding: '12px 16px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 600, color: '#252525' }}>
-                              <span>{enc.encounter_type || 'Clinical Encounter'}</span>
-                              <span style={{ fontSize: '11px', color: '#777773' }}>{enc.encounter_date || enc.created_at}</span>
-                            </div>
-                            {enc.reason_for_visit && (
-                              <div style={{ fontSize: '12px', color: '#777773', marginTop: '4px' }}>
-                                Reason: {enc.reason_for_visit}
-                              </div>
-                            )}
-                          </div>
-                        ))}
+              {activeTab === 'encounters' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {(!selectedPatient.encounters || selectedPatient.encounters.length === 0) ? (
+                    <div style={{ color: '#777773', fontSize: '13px', textAlign: 'center', padding: '36px' }}>
+                      No clinical encounters recorded.
+                    </div>
+                  ) : (
+                    selectedPatient.encounters.map((enc) => (
+                      <div key={enc.id} className="card" style={{ padding: '14px 18px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                          <span style={{ fontWeight: 700, fontSize: '14px', color: '#252525' }}>{enc.encounter_id} \u2014 {enc.encounter_type}</span>
+                          <span style={{ fontSize: '12px', color: '#777773' }}>{enc.encounter_date}</span>
+                        </div>
+                        <div style={{ fontSize: '13px', color: '#777773' }}>
+                          <b>Department:</b> {enc.department} | <b>Attending:</b> {enc.attending_clinician}
+                        </div>
+                        <div style={{ fontSize: '13px', color: '#252525', marginTop: '4px' }}>
+                          <b>Reason for visit:</b> {enc.reason_for_visit}
+                        </div>
                       </div>
-                    )}
-                  </div>
+                    ))
+                  )}
+                </div>
+              )}
 
-                  {/* Previous Reports */}
-                  <div>
-                    <h4 style={{ fontSize: '13px', fontWeight: 600, color: '#777773', textTransform: 'uppercase', margin: '12px 0 8px' }}>
-                      Finalized Reports
-                    </h4>
-                    {!selectedPatient.reports || selectedPatient.reports.length === 0 ? (
-                      <div style={{ fontSize: '13px', color: '#777773' }}>No finalized reports yet.</div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {selectedPatient.reports.map((rep) => (
-                          <div key={rep.id} className="card" style={{ padding: '12px 16px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 600, color: '#252525' }}>
-                              <span>{rep.report_id}</span>
-                              <span style={{ fontSize: '11px', color: '#34765A' }}>Signed by {rep.signed_by || 'Clinician'}</span>
-                            </div>
-                            <div style={{ fontSize: '12px', color: '#777773', marginTop: '4px' }}>
-                              Status: {rep.status === 'finalized' ? 'Finalized diagnostic summary' : 'Draft report'}
-                            </div>
-                          </div>
-                        ))}
+              {activeTab === 'notes' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {(!selectedPatient.clinical_notes || selectedPatient.clinical_notes.length === 0) ? (
+                    <div style={{ color: '#777773', fontSize: '13px', textAlign: 'center', padding: '36px' }}>
+                      No clinical notes written for this patient yet.
+                    </div>
+                  ) : (
+                    selectedPatient.clinical_notes.map((n) => (
+                      <div key={n.id} className="card" style={{ padding: '16px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                          <span style={{ fontWeight: 700, fontSize: '13px', color: '#252525' }}>Author: {n.author}</span>
+                          <span style={{ fontSize: '11px', color: '#777773' }}>{n.updated_at}</span>
+                        </div>
+                        <div style={{ fontSize: '13px', color: '#252525', whiteSpace: 'pre-wrap' }}>
+                          {n.clinician_observations || n.clinician_assessment || 'Draft note.'}
+                        </div>
                       </div>
-                    )}
-                  </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'reports' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {(!selectedPatient.reports || selectedPatient.reports.length === 0) ? (
+                    <div style={{ color: '#777773', fontSize: '13px', textAlign: 'center', padding: '36px' }}>
+                      No finalized clinical reports recorded for this patient yet.
+                    </div>
+                  ) : (
+                    selectedPatient.reports.map((rep) => (
+                      <div key={rep.id} className="card" style={{ padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: '14px', color: '#252525' }}>{rep.report_id} (Version {rep.version})</div>
+                          <div style={{ fontSize: '12px', color: '#777773', marginTop: '2px' }}>
+                            Signed by: {rep.signed_by || 'Clinician'} \u2022 Finalized {rep.finalized_at?.slice(0, 16)}
+                          </div>
+                        </div>
+                        <span style={{ fontSize: '11px', fontWeight: 600, padding: '3px 8px', borderRadius: '4px', background: '#E8F4EE', color: '#34765A' }}>
+                          FINALIZED
+                        </span>
+                      </div>
+                    ))
+                  )}
                 </div>
               )}
             </div>
@@ -559,166 +668,171 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
         )}
       </div>
 
-      {/* Register Patient Modal */}
-      {showRegisterModal && (
-        <div className="modal-overlay" onClick={() => setShowRegisterModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ fontSize: '16px', fontWeight: 600, margin: 0 }}>Register Patient</h3>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowRegisterModal(false)}>
+      {/* Patient Registration / Edit Modal */}
+      {(showRegisterModal || showEditModal) && (
+        <div className="modal-backdrop">
+          <div className="card modal-dialog" style={{ width: '600px', padding: '24px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#252525', margin: 0 }}>
+                {showRegisterModal ? 'Register New Patient' : 'Edit Patient Chart'}
+              </h3>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => {
+                  setShowRegisterModal(false)
+                  setShowEditModal(false)
+                }}
+              >
                 <X size={16} />
               </button>
             </div>
+
             {formError && (
-              <div style={{ background: '#FDEEEE', color: '#B33A3A', padding: '8px 12px', borderRadius: '4px', fontSize: '12px', marginBottom: '12px' }}>
+              <div style={{ padding: '10px 12px', borderRadius: '6px', background: '#FDEEEE', color: '#B33A3A', fontSize: '13px', marginBottom: '16px' }}>
                 {formError}
               </div>
             )}
-            <form onSubmit={handleRegisterSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+
+            <form onSubmit={showRegisterModal ? handleRegisterSubmit : handleEditSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
-                <label style={{ fontSize: '12px', fontWeight: 500, display: 'block', marginBottom: '4px' }}>Full Name *</label>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                  Patient Full Name *
+                </label>
                 <input
                   type="text"
+                  required
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
                   placeholder="e.g. Eleanor Vance"
-                  required
-                  style={{ width: '100%', padding: '7px 10px', fontSize: '13px', border: '1px solid #E8E6E1', borderRadius: '6px' }}
+                  style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
                 />
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
                 <div>
-                  <label style={{ fontSize: '12px', fontWeight: 500, display: 'block', marginBottom: '4px' }}>MRN</label>
-                  <input
-                    type="text"
-                    value={formMrn}
-                    onChange={(e) => setFormMrn(e.target.value)}
-                    placeholder="e.g. MRN-9012"
-                    style={{ width: '100%', padding: '7px 10px', fontSize: '13px', border: '1px solid #E8E6E1', borderRadius: '6px' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 500, display: 'block', marginBottom: '4px' }}>Sex</label>
-                  <select
-                    value={formSex}
-                    onChange={(e) => setFormSex(e.target.value)}
-                    style={{ width: '100%', padding: '7px 10px', fontSize: '13px', border: '1px solid #E8E6E1', borderRadius: '6px' }}
-                  >
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                    <option value="Other">Other</option>
-                  </select>
-                </div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 500, display: 'block', marginBottom: '4px' }}>Age</label>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                    Age (Years)
+                  </label>
                   <input
                     type="number"
                     value={formAge}
                     onChange={(e) => setFormAge(e.target.value)}
-                    placeholder="e.g. 64"
-                    style={{ width: '100%', padding: '7px 10px', fontSize: '13px', border: '1px solid #E8E6E1', borderRadius: '6px' }}
+                    placeholder="e.g. 58"
+                    style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
                   />
                 </div>
+
                 <div>
-                  <label style={{ fontSize: '12px', fontWeight: 500, display: 'block', marginBottom: '4px' }}>Date of Birth</label>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                    Date of Birth
+                  </label>
                   <input
                     type="date"
                     value={formDob}
                     onChange={(e) => setFormDob(e.target.value)}
-                    style={{ width: '100%', padding: '7px 10px', fontSize: '13px', border: '1px solid #E8E6E1', borderRadius: '6px' }}
+                    style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
                   />
                 </div>
-              </div>
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: 500, display: 'block', marginBottom: '4px' }}>Clinical History</label>
-                <textarea
-                  value={formHistory}
-                  onChange={(e) => setFormHistory(e.target.value)}
-                  placeholder="Prior MI, hypertension, etc."
-                  rows={2}
-                  style={{ width: '100%', padding: '7px 10px', fontSize: '13px', border: '1px solid #E8E6E1', borderRadius: '6px' }}
-                />
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowRegisterModal(false)}>
-                  Cancel
-                </button>
-                <button type="submit" className="btn btn-primary btn-sm" disabled={formSubmitting}>
-                  {formSubmitting ? 'Registering...' : 'Register'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
-      {/* Edit Patient Modal */}
-      {showEditModal && (
-        <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ fontSize: '16px', fontWeight: 600, margin: 0 }}>Edit Patient</h3>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowEditModal(false)}>
-                <X size={16} />
-              </button>
-            </div>
-            <form onSubmit={handleEditSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: 500, display: 'block', marginBottom: '4px' }}>Full Name</label>
-                <input
-                  type="text"
-                  value={formName}
-                  onChange={(e) => setFormName(e.target.value)}
-                  required
-                  style={{ width: '100%', padding: '7px 10px', fontSize: '13px', border: '1px solid #E8E6E1', borderRadius: '6px' }}
-                />
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 <div>
-                  <label style={{ fontSize: '12px', fontWeight: 500, display: 'block', marginBottom: '4px' }}>Age</label>
-                  <input
-                    type="number"
-                    value={formAge}
-                    onChange={(e) => setFormAge(e.target.value)}
-                    style={{ width: '100%', padding: '7px 10px', fontSize: '13px', border: '1px solid #E8E6E1', borderRadius: '6px' }}
-                  />
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                    Sex (for ECG criteria)
+                  </label>
+                  <select
+                    value={formSex}
+                    onChange={(e) => setFormSex(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1', background: '#FFFFFF' }}
+                  >
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                    <option value="Unknown">Unknown</option>
+                  </select>
                 </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
-                  <label style={{ fontSize: '12px', fontWeight: 500, display: 'block', marginBottom: '4px' }}>MRN</label>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                    External MRN (Optional)
+                  </label>
                   <input
                     type="text"
                     value={formMrn}
                     onChange={(e) => setFormMrn(e.target.value)}
-                    style={{ width: '100%', padding: '7px 10px', fontSize: '13px', border: '1px solid #E8E6E1', borderRadius: '6px' }}
+                    placeholder="e.g. MRN-84920"
+                    style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                    Contact Info (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={formContact}
+                    onChange={(e) => setFormContact(e.target.value)}
+                    placeholder="Phone or clinic reference"
+                    style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
                   />
                 </div>
               </div>
+
               <div>
-                <label style={{ fontSize: '12px', fontWeight: 500, display: 'block', marginBottom: '4px' }}>Clinical History</label>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                  Relevant Cardiovascular History
+                </label>
                 <textarea
+                  rows={2}
                   value={formHistory}
                   onChange={(e) => setFormHistory(e.target.value)}
-                  rows={2}
-                  style={{ width: '100%', padding: '7px 10px', fontSize: '13px', border: '1px solid #E8E6E1', borderRadius: '6px' }}
+                  placeholder="e.g. Prior MI, hypertension, dyslipidemia, CABG..."
+                  style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
                 />
               </div>
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: 500, display: 'block', marginBottom: '4px' }}>Medications</label>
-                <input
-                  type="text"
-                  value={formMedications}
-                  onChange={(e) => setFormMedications(e.target.value)}
-                  style={{ width: '100%', padding: '7px 10px', fontSize: '13px', border: '1px solid #E8E6E1', borderRadius: '6px' }}
-                />
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                    Allergies
+                  </label>
+                  <input
+                    type="text"
+                    value={formAllergies}
+                    onChange={(e) => setFormAllergies(e.target.value)}
+                    placeholder="e.g. NKDA, Penicillin"
+                    style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                    Medications
+                  </label>
+                  <input
+                    type="text"
+                    value={formMedications}
+                    onChange={(e) => setFormMedications(e.target.value)}
+                    placeholder="e.g. Lisinopril, Aspirin"
+                    style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
+                  />
+                </div>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowEditModal(false)}>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setShowRegisterModal(false)
+                    setShowEditModal(false)
+                  }}
+                >
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary btn-sm" disabled={formSubmitting}>
-                  Save Changes
+                <button type="submit" className="btn btn-primary" disabled={formSubmitting}>
+                  {formSubmitting ? 'Saving...' : showRegisterModal ? 'Register Patient' : 'Save Changes'}
                 </button>
               </div>
             </form>
@@ -726,61 +840,69 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
         </div>
       )}
 
-      {/* Attach ECG Modal */}
-      {showAttachECGModal && (
-        <div className="modal-overlay" onClick={() => setShowAttachECGModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+      {/* Attach ECG Study Modal */}
+      {showAttachECGModal && selectedPatient && (
+        <div className="modal-backdrop">
+          <div className="card modal-dialog" style={{ width: '480px', padding: '24px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ fontSize: '16px', fontWeight: 600, margin: 0 }}>Attach ECG Study</h3>
+              <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#252525', margin: 0 }}>
+                Attach ECG Study to {selectedPatient.name}
+              </h3>
               <button className="btn btn-ghost btn-sm" onClick={() => setShowAttachECGModal(false)}>
                 <X size={16} />
               </button>
             </div>
-            <p style={{ fontSize: '13px', color: '#777773', margin: '0 0 16px' }}>
-              Select a standard 12-lead PTB-XL ECG recording to attach to {selectedPatient?.name}.
+
+            <p style={{ fontSize: '13px', color: '#777773', marginBottom: '16px' }}>
+              Create a genuine 12-lead study record attached to this patient chart. Select an acquisition from preloaded test records or upload a signal.
             </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: 500, display: 'block', marginBottom: '4px' }}>Sample Signal</label>
-                <select
-                  value={selectedSampleIdx}
-                  onChange={(e) => setSelectedSampleIdx(parseInt(e.target.value, 10))}
-                  style={{ width: '100%', padding: '7px 10px', fontSize: '13px', border: '1px solid #E8E6E1', borderRadius: '6px' }}
-                >
-                  <option value={0}>Sample #0 (NORM — Normal ECG)</option>
-                  <option value={1}>Sample #1 (MI — Myocardial Infarction)</option>
-                  <option value={2}>Sample #2 (STTC — ST/T Change)</option>
-                  <option value={3}>Sample #3 (CD — Conduction Disturbance)</option>
-                  <option value={4}>Sample #4 (HYP — Hypertrophy)</option>
-                </select>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowAttachECGModal(false)}>
-                  Cancel
-                </button>
-                <button type="button" className="btn btn-primary btn-sm" onClick={handleAttachECGSubmit} disabled={formSubmitting}>
-                  Attach & Review
-                </button>
-              </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '6px' }}>
+                Select Acquisition Signal
+              </label>
+              <select
+                value={selectedSampleIdx}
+                onChange={(e) => setSelectedSampleIdx(parseInt(e.target.value, 10))}
+                style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1', background: '#FFFFFF' }}
+              >
+                <option value={5}>Sample 5 — Anteroseptal MI Pattern (Pathological Q/ST)</option>
+                <option value={14}>Sample 14 — ST/T Change Pattern (T-wave inversion)</option>
+                <option value={6}>Sample 6 — Conduction Disturbance Pattern (LBBB/RBBB)</option>
+                <option value={24}>Sample 24 — Complex Multilabel Pattern (MI + CD + HYP)</option>
+                <option value={0}>Sample 0 — Normal Sinus ECG (Healthy Controls)</option>
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button className="btn btn-secondary" onClick={() => setShowAttachECGModal(false)}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" onClick={handleAttachECGSubmit} disabled={formSubmitting}>
+                {formSubmitting ? 'Attaching...' : 'Create Study & Open Review'}
+              </button>
             </div>
           </div>
         </div>
       )}
 
       {/* Delete Confirmation Modal */}
-      {showDeleteModal && (
-        <div className="modal-overlay" onClick={() => setShowDeleteModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#B33A3A', margin: '0 0 8px' }}>Delete Patient</h3>
-            <p style={{ fontSize: '13px', color: '#777773', margin: '0 0 16px', lineHeight: 1.5 }}>
-              Are you sure you want to delete {selectedPatient?.name}? Associated studies and notes will be removed.
+      {showDeleteModal && selectedPatient && (
+        <div className="modal-backdrop">
+          <div className="card modal-dialog" style={{ width: '440px', padding: '24px' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#B33A3A', marginBottom: '8px' }}>
+              Delete Patient Record?
+            </h3>
+            <p style={{ fontSize: '13px', color: '#777773', marginBottom: '20px' }}>
+              Are you sure you want to delete patient <b>{selectedPatient.name}</b> ({selectedPatient.patient_id})?
+              All associated ECG studies, clinical notes, and reports will be permanently deleted.
             </p>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-              <button className="btn btn-secondary btn-sm" onClick={() => setShowDeleteModal(false)}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button className="btn btn-secondary" onClick={() => setShowDeleteModal(false)}>
                 Cancel
               </button>
-              <button className="btn btn-sm" onClick={handleDeleteConfirm} style={{ background: '#B33A3A', color: '#FFFFFF', border: 'none' }}>
-                Delete
+              <button className="btn btn-danger" onClick={handleDeleteConfirm}>
+                Permanently Delete
               </button>
             </div>
           </div>

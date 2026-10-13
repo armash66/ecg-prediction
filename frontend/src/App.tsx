@@ -12,58 +12,94 @@ import { ClinicalReportsView } from './components/ClinicalReportsView'
 import { ResearchLabView } from './components/ResearchLabView'
 import { SettingsView } from './components/SettingsView'
 
-// Plain-language headings without buzzwords or marketing phrases
+// Legacy / Direct access views
+import { OverviewView } from './components/OverviewView'
+import { ECGAnalysisView } from './components/ECGAnalysisView'
+import { SignalExplorerView } from './components/SignalExplorerView'
+import { ExplainabilityView } from './components/ExplainabilityView'
+import { ModelComparisonView } from './components/ModelComparisonView'
+import { FaithfulnessLabView } from './components/FaithfulnessLabView'
+import { RobustnessLabView } from './components/RobustnessLabView'
+import { ResearchAnalyticsView } from './components/ResearchAnalyticsView'
+import { AnalysisHistoryView } from './components/AnalysisHistoryView'
+import { ReportsExportView } from './components/ReportsExportView'
+import { ModelLabView } from './components/ModelLabView'
+
 const TAB_TITLES: Record<NavigationTab, { title: string; subtitle: string }> = {
-  overview: {
-    title: 'Overview',
-    subtitle: 'Studies awaiting review and recent clinical activity.',
-  },
   clinical_overview: {
-    title: 'Overview',
-    subtitle: 'Studies awaiting review and recent clinical activity.',
+    title: 'Clinical Overview Dashboard',
+    subtitle: 'Encounter Highlights, Pending Studies & Quick Actions',
   },
   worklist: {
-    title: 'ECG Worklist',
-    subtitle: 'Registered studies awaiting clinical review.',
+    title: 'ECG Study Worklist',
+    subtitle: '12-Lead Electrocardiograms Awaiting Clinical Review & Interpretation',
   },
   patients: {
-    title: 'Patients',
-    subtitle: 'Patient records, clinical history, and attached ECG studies.',
+    title: 'Patients Directory & Longitudinal Charts',
+    subtitle: 'Patient Demographics, Clinical History & Associated ECG Encounters',
   },
   ecg_review: {
-    title: 'ECG Review',
-    subtitle: '12-lead waveforms, AI analysis, and clinical documentation.',
-  },
-  reports: {
-    title: 'Reports',
-    subtitle: 'Printable medical reports and finalized encounter summaries.',
-  },
-  research: {
-    title: 'Research',
-    subtitle: 'Model benchmarks, explainability, and technical experiments.',
-  },
-  research_lab: {
-    title: 'Research',
-    subtitle: 'Model benchmarks, explainability, and technical experiments.',
-  },
-  settings: {
-    title: 'Settings',
-    subtitle: 'System status, model selection, and configuration.',
+    title: 'Clinical ECG Review Workspace',
+    subtitle: 'Interactive 12-Lead Viewer, Multilabel AI Findings & Structured Documentation',
   },
   encounters: {
-    title: 'Encounters',
-    subtitle: 'Clinical encounters and past ECG history.',
+    title: 'Encounters & History Studio',
+    subtitle: 'Longitudinal ECG Comparison, Waveform Tracking & Model Delta Analysis',
   },
-  // Legacy aliases
-  analysis: { title: 'AI Analysis', subtitle: '12-lead analysis' },
-  signal_explorer: { title: 'Signal Analysis', subtitle: 'Waveform and frequency analysis' },
-  explainability: { title: 'Why this result?', subtitle: 'Attribution heatmaps' },
-  model_comparison: { title: 'Compare models', subtitle: 'Model agreement' },
-  faithfulness: { title: 'Explanation testing', subtitle: 'Testing model explanations' },
-  robustness: { title: 'Robustness tests', subtitle: 'Signal perturbation testing' },
-  research_analytics: { title: 'Model Performance', subtitle: 'Benchmark metrics' },
-  history: { title: 'Analysis History', subtitle: 'Previous analyses' },
-  modellab: { title: 'Model Performance', subtitle: 'Model comparison' },
+  reports: {
+    title: 'Clinical Reports & Documentation',
+    subtitle: 'Printable HTML/PDF Reports, JSON Summaries & Encounter Sign-Offs',
+  },
+  research_lab: {
+    title: 'Research & Explainability Laboratory',
+    subtitle: 'Integrated Gradients, Model Agreement, Faithfulness & Robustness Experiments',
+  },
+  settings: {
+    title: 'System Settings & Clinical Governance',
+    subtitle: 'Inference Architecture Selection, Privacy Protocols & Regulatory Disclosures',
+  },
+
+  // Legacy mappings
+  overview: {
+    title: 'Research Overview Dashboard',
+    subtitle: 'PTB-XL Benchmark Highlights & System Status',
+  },
+  analysis: {
+    title: '12-Lead ECG Analysis Workspace',
+    subtitle: 'Multilabel Inference, Threshold Interpretation & Signal Diagnostics',
+  },
+  signal_explorer: {
+    title: 'Signal Explorer & Time-Frequency Studio',
+    subtitle: 'High-Resolution 12-Lead Viewer, STFT Spectrogram & Morphology Metrics',
+  },
+  explainability: {
+    title: 'Explainability & Attribution Studio',
+    subtitle: 'Time \u00D7 Lead Heatmaps, Class \u00D7 Lead Matrices & Diagnostic Completeness',
+  },
+  model_comparison: {
+    title: 'Multi-Model Evaluation & Agreement',
+    subtitle: 'Simultaneous Multi-Model Inference, \u0394P Heatmaps & Consensus Matrix',
+  },
+  faithfulness: {
+    title: 'Faithfulness & Perturbation Laboratory',
+    subtitle: 'Deletion / Insertion Trajectories, AUDC / AUIC & 12-Lead Ablation',
+  },
+  robustness: {
+    title: 'Controlled Robustness & Stress-Testing',
+    subtitle: 'Electrode Jitter, Baseline Drift, Lead Dropout & Stability Scoring',
+  },
+  research_analytics: {
+    title: 'Research Benchmark Analytics & Leaderboard',
+    subtitle: 'Hold-Out Test Fold 10 Performance Metrics & Validation Thresholds',
+  },
+  history: {
+    title: 'Analysis Session History & Persistence',
+    subtitle: 'SQLite Database of Recorded Analyses, Inferences & Reports',
+  },
+  modellab: {
+    title: 'Comparative Model Laboratory',
+    subtitle: 'Architecture Specifications, Checkpoint Registry & Metric Browser',
+  },
 }
 
 const AppContent: React.FC = () => {
@@ -71,40 +107,44 @@ const AppContent: React.FC = () => {
     currentTab,
     setCurrentTab,
     activeModel,
+    setActiveModel,
     health,
-    selectedStudy,
-    openStudyForReview,
+    models,
+    metrics,
+    samples,
     setSelectedClass,
     setResearchSubTab,
+    selectedStudy,
+    openStudyForReview,
   } = useAnalysis()
 
   const tabMeta = TAB_TITLES[currentTab] || {
     title: 'ECG Intelligence',
-    subtitle: 'Review and documentation assistant',
+    subtitle: 'Clinical Review & Documentation Assistant',
   }
 
   return (
-    <div className="app-layout">
+    <div className="app-container">
       <Sidebar
         currentTab={currentTab}
         onSelectTab={(tab) => setCurrentTab(tab)}
         health={health}
       />
 
-      <div className="main-wrapper">
+      <div className="app-main">
         <Header
           title={tabMeta.title}
           subtitle={tabMeta.subtitle}
           activeModel={activeModel}
           health={health}
           selectedStudy={selectedStudy}
+          showReviewButton={currentTab !== 'ecg_review'}
           onOpenReview={() => setCurrentTab('ecg_review')}
-          showReviewButton={currentTab !== 'ecg_review' && !!selectedStudy}
         />
 
-        <main className="page-container" style={{ padding: '20px 28px' }}>
+        <main className="page-container" style={{ padding: '24px 32px' }}>
           {/* Primary Clinical Navigation Views */}
-          {(currentTab === 'overview' || currentTab === 'clinical_overview') && (
+          {currentTab === 'clinical_overview' && (
             <ClinicalOverviewView
               onNavigateToTab={(tab) => setCurrentTab(tab)}
               onRegisterPatient={() => setCurrentTab('patients')}
@@ -124,14 +164,14 @@ const AppContent: React.FC = () => {
             />
           )}
 
-          {(currentTab === 'ecg_review' || currentTab === 'analysis') && (
+          {currentTab === 'ecg_review' && (
             <ClinicalECGReviewView
               onNavigateToExplain={(cls) => {
                 setSelectedClass(cls)
                 setResearchSubTab('explainability')
-                setCurrentTab('research')
+                setCurrentTab('research_lab')
               }}
-              onNavigateToReports={() => {
+              onNavigateToReports={(studyId) => {
                 setCurrentTab('reports')
               }}
             />
@@ -147,19 +187,48 @@ const AppContent: React.FC = () => {
             <ClinicalReportsView initialStudyId={selectedStudy?.id} />
           )}
 
-          {(currentTab === 'research' ||
-            currentTab === 'research_lab' ||
-            currentTab === 'explainability' ||
-            currentTab === 'signal_explorer' ||
-            currentTab === 'model_comparison' ||
-            currentTab === 'faithfulness' ||
-            currentTab === 'robustness' ||
-            currentTab === 'research_analytics' ||
-            currentTab === 'modellab') && (
-            <ResearchLabView />
-          )}
+          {currentTab === 'research_lab' && <ResearchLabView />}
 
           {currentTab === 'settings' && <SettingsView />}
+
+          {/* Backward compatibility direct tab renderings */}
+          {currentTab === 'overview' && (
+            <OverviewView
+              metrics={metrics}
+              health={health}
+              onNavigateToAnalysis={() => setCurrentTab('ecg_review')}
+              onNavigateToModelLab={() => {
+                setResearchSubTab('modellab')
+                setCurrentTab('research_lab')
+              }}
+            />
+          )}
+
+          {currentTab === 'analysis' && (
+            <ClinicalECGReviewView
+              onNavigateToExplain={(cls) => {
+                setSelectedClass(cls)
+                setResearchSubTab('explainability')
+                setCurrentTab('research_lab')
+              }}
+              onNavigateToReports={() => setCurrentTab('reports')}
+            />
+          )}
+
+          {currentTab === 'explainability' && <ExplainabilityView />}
+          {currentTab === 'signal_explorer' && <SignalExplorerView />}
+          {currentTab === 'model_comparison' && <ModelComparisonView />}
+          {currentTab === 'faithfulness' && <FaithfulnessLabView />}
+          {currentTab === 'robustness' && <RobustnessLabView />}
+          {currentTab === 'research_analytics' && <ResearchAnalyticsView />}
+          {currentTab === 'history' && <AnalysisHistoryView />}
+          {currentTab === 'modellab' && (
+            <ModelLabView
+              models={models}
+              activeModel={activeModel}
+              onModelSwitched={(newM) => setActiveModel(newM)}
+            />
+          )}
         </main>
       </div>
     </div>
