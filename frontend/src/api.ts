@@ -130,7 +130,8 @@ export async function fetchExplanation(
   signal: number[][],
   targetClass: DiagnosticClass,
   model?: string,
-  steps: number = 40
+  steps: number = 40,
+  method: string = 'integrated_gradients'
 ): Promise<ExplainResponse> {
   const res = await fetch(`${BASE_URL}/api/explain`, {
     method: 'POST',
@@ -140,6 +141,7 @@ export async function fetchExplanation(
       model,
       target_class: targetClass,
       steps,
+      method,
     }),
   })
   if (!res.ok) {
@@ -148,6 +150,92 @@ export async function fetchExplanation(
   }
   return res.json()
 }
+
+export async function fetchSpectrogram(
+  signal: number[][],
+  lead: string | number = 1,
+  nperseg: number = 64,
+  noverlap: number = 48
+): Promise<import('./types').SpectrogramResponse> {
+  const res = await fetch(`${BASE_URL}/api/signal/spectrogram`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ signal, lead, nperseg, noverlap }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Spectrogram computation failed')
+  }
+  return res.json()
+}
+
+export async function fetchMorphology(
+  signal: number[][],
+  lead: string | number = 1
+): Promise<import('./types').MorphologyResponse> {
+  const res = await fetch(`${BASE_URL}/api/signal/morphology`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ signal, lead }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Morphology analysis failed')
+  }
+  return res.json()
+}
+
+export async function fetchBatchExplainMatrix(
+  signal: number[][],
+  model?: string,
+  method: string = 'integrated_gradients',
+  steps: number = 20
+): Promise<import('./types').BatchExplainMatrixResponse> {
+  const res = await fetch(`${BASE_URL}/api/explain/batch_matrix`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ signal, model, method, steps }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Batch attribution matrix computation failed')
+  }
+  return res.json()
+}
+
+export async function fetchClassTimeMatrix(
+  signal: number[][],
+  model?: string,
+  numWindows: number = 20
+): Promise<import('./types').ClassTimeMatrixResponse> {
+  const res = await fetch(`${BASE_URL}/api/explain/class_time_matrix`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ signal, model, num_windows: numWindows }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Class-Time matrix computation failed')
+  }
+  return res.json()
+}
+
+export async function fetchFullLeadAblationMatrix(
+  signal: number[][],
+  model?: string
+): Promise<import('./types').LeadAblationMatrixResponse> {
+  const res = await fetch(`${BASE_URL}/api/explain/lead_ablation_matrix`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ signal, model }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Full lead ablation matrix failed')
+  }
+  return res.json()
+}
+
 
 export async function fetchLeadAblation(
   signal: number[][],

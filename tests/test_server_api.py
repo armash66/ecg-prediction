@@ -203,3 +203,90 @@ def test_api_analyses_persistence_and_report():
     del_res = client.delete(f"/api/analyses/{anl_id}")
     assert del_res.status_code == 200
 
+
+def test_api_spectrogram():
+    sig = np.random.randn(1000, 12).tolist()
+    res = client.post("/api/signal/spectrogram", json={"signal": sig, "lead": "II"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["lead"] == "II"
+    assert "frequencies" in data
+    assert "times" in data
+    assert "power_db" in data
+    assert "band_energies" in data
+    assert len(data["power_db"]) > 0
+
+
+def test_api_morphology():
+    sig = np.random.randn(1000, 12).tolist()
+    res = client.post("/api/signal/morphology", json={"signal": sig, "lead": 1})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["lead"] == "II"
+    assert "statistics" in data
+    assert "morphology" in data
+    assert "min_mv" in data["statistics"]
+    assert "detected_r_peaks" in data["morphology"]
+
+
+def test_api_explain_methods_and_batch_matrices():
+    sig = np.random.randn(1000, 12).tolist()
+
+    # 1. Gradient x Input
+    res_gxi = client.post("/api/explain", json={
+        "signal": sig,
+        "target_class": "MI",
+        "method": "gradient_x_input"
+    })
+    assert res_gxi.status_code == 200
+    assert res_gxi.json()["method"] == "gradient_x_input"
+
+    # 2. SmoothGrad
+    res_sg = client.post("/api/explain", json={
+        "signal": sig,
+        "target_class": "MI",
+        "method": "smoothgrad"
+    })
+    assert res_sg.status_code == 200
+    assert res_sg.json()["method"] == "smoothgrad"
+
+    # 3. Integrated Gradients with Diagnostics
+    res_ig = client.post("/api/explain", json={
+        "signal": sig,
+        "target_class": "MI",
+        "method": "integrated_gradients",
+        "steps": 20
+    })
+    assert res_ig.status_code == 200
+    ig_data = res_ig.json()
+    assert "diagnostics" in ig_data
+    assert "completeness_error" in ig_data["diagnostics"]
+
+    # 4. Batch Class x Lead Matrix
+    res_batch = client.post("/api/explain/batch_matrix", json={
+        "signal": sig,
+        "steps": 10
+    })
+    assert res_batch.status_code == 200
+    batch_data = res_batch.json()
+    assert len(batch_data["magnitude_matrix"]) == 5
+    assert len(batch_data["magnitude_matrix"][0]) == 12
+
+    # 5. Class x Time Matrix
+    res_time = client.post("/api/explain/class_time_matrix", json={
+        "signal": sig,
+        "num_windows": 10
+    })
+    assert res_time.status_code == 200
+    time_data = res_time.json()
+    assert len(time_data["magnitude_matrix"]) == 5
+    assert len(time_data["magnitude_matrix"][0]) == 10
+
+    # 6. Full Lead Ablation Matrix
+    res_abl = client.post("/api/explain/lead_ablation_matrix", json={"signal": sig})
+    assert res_abl.status_code == 200
+    abl_data = res_abl.json()
+    assert len(abl_data["delta_p_matrix"]) == 5
+    assert len(abl_data["delta_p_matrix"][0]) == 12
+
+

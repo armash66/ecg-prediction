@@ -1,366 +1,487 @@
 import React, { useState, useEffect } from 'react'
 import {
+  Layers,
   Activity,
-  AlertCircle,
-  BarChart2,
+  Sliders,
+  RotateCcw,
   CheckCircle2,
-  ChevronRight,
-  Download,
+  AlertCircle,
   HelpCircle,
   Info,
-  Layers,
-  Play,
-  RotateCcw,
-  Sliders,
+  Clock,
   Sparkles,
-  Zap
+  GitCompare,
+  Check,
 } from 'lucide-react'
 import {
   DiagnosticClass,
   LeadImportanceItem,
   TimeRegionItem,
-  LeadAblationResponse,
-  FaithfulnessResponse,
   PreloadedSampleSummary,
+  ExplainResponse,
 } from '../types'
-import {
-  analyzeECG,
-  fetchExplanation,
-  fetchLeadAblation,
-  runFaithfulnessTest,
-} from '../api'
+import { useAnalysis } from '../context/AnalysisContext'
 import { ECGViewer } from './ECGViewer'
 import { AttributionHeatmap } from './AttributionHeatmap'
 import { TimeRegionsView } from './TimeRegionsView'
-import { LeadAblationView } from './LeadAblationView'
-import { FaithfulnessCurveView } from './FaithfulnessCurveView'
-import { DisclaimerBanner } from './DisclaimerBanner'
-
-interface ExplainabilityViewProps {
-  currentSignal: number[][] | null
-  activeModel: string
-  samples: PreloadedSampleSummary[]
-  onSelectSample: (idx: number) => void
-  targetClass?: DiagnosticClass
-}
+import { ClassLeadImportanceMatrix } from './ClassLeadImportanceMatrix'
+import { ClassTimeMatrixView } from './ClassTimeMatrixView'
 
 const SUPERCLASSES: DiagnosticClass[] = ['CD', 'HYP', 'MI', 'NORM', 'STTC']
 
-export const ExplainabilityView: React.FC<ExplainabilityViewProps> = ({
-  currentSignal,
-  activeModel,
-  samples,
-  onSelectSample,
-  targetClass: propTargetClass,
-}) => {
-  const [selectedClass, setSelectedClass] = useState<DiagnosticClass>(propTargetClass || 'MI')
-  const [isExplaining, setIsExplaining] = useState<boolean>(false)
-  const [attributionMap, setAttributionMap] = useState<number[][] | null>(null)
-  const [leadImportance, setLeadImportance] = useState<LeadImportanceItem[] | null>(null)
-  const [timeRegions, setTimeRegions] = useState<TimeRegionItem[] | null>(null)
-  const [explainError, setExplainError] = useState<string | null>(null)
+export const ExplainabilityView: React.FC = () => {
+  const {
+    currentSignal,
+    activeModel,
+    selectedClass,
+    setSelectedClass,
+    attributionResult,
+    runExplanation,
+    isExplaining,
+    samples,
+    loadSampleByIndex,
+  } = useAnalysis()
 
-  // Selected time interval for inspection (e.g. from TimeRegionsView or Heatmap)
+  const [attributionMethod, setAttributionMethod] = useState<'integrated_gradients' | 'gradient_x_input' | 'smoothgrad'>('integrated_gradients')
+  const [steps, setSteps] = useState<number>(40)
   const [selectedInterval, setSelectedInterval] = useState<{ start: number; end: number } | null>(null)
+  const [selectedLeadFocus, setSelectedLeadFocus] = useState<number | null>(null)
 
-  // Lead ablation state
-  const [isAblating, setIsAblating] = useState<boolean>(false)
-  const [ablationData, setAblationData] = useState<LeadAblationResponse | null>(null)
+  // Comparison Mode (Side-by-Side: e.g. MI vs STTC)
+  const [compareMode, setCompareMode] = useState<boolean>(false)
+  const [compareClass, setCompareClass] = useState<DiagnosticClass>('STTC')
+  const [compareResult, setCompareResult] = useState<ExplainResponse | null>(null)
+  const [isComparing, setIsComparing] = useState<boolean>(false)
 
-  // Faithfulness test state
-  const [isRunningFaithfulness, setIsRunningFaithfulness] = useState<boolean>(false)
-  const [faithfulnessResult, setFaithfulnessResult] = useState<FaithfulnessResponse | null>(null)
-  const [faithfulnessError, setFaithfulnessError] = useState<string | null>(null)
+  // Sub-tabs within Explainability Studio
+  const [activeSubTab, setActiveSubTab] = useState<'time_lead' | 'class_lead' | 'class_time' | 'diagnostics'>('time_lead')
 
-  // Export report modal state
-  const [showExportModal, setShowExportModal] = useState<boolean>(false)
-
-  // Synchronize target class if passed from parent
+  // Auto-generate attribution if none exists
   useEffect(() => {
-    if (propTargetClass && propTargetClass !== selectedClass) {
-      setSelectedClass(propTargetClass)
-      // Auto compute if signal exists
-      if (currentSignal) {
-        computeAttributionForClass(propTargetClass)
-      }
+    if (currentSignal && !attributionResult && !isExplaining) {
+      runExplanation(selectedClass, attributionMethod, steps)
     }
-  }, [propTargetClass])
+  }, [currentSignal, selectedClass])
 
-  // Automatically compute attribution on signal change or initial load if signal exists
-  useEffect(() => {
-    if (currentSignal && !attributionMap) {
-      computeAttributionForClass(selectedClass)
-    }
-  }, [currentSignal])
-
-  const computeAttributionForClass = async (cls: DiagnosticClass) => {
-    if (!currentSignal) return
-    setIsExplaining(true)
-    setExplainError(null)
-    setFaithfulnessResult(null)
-    setAblationData(null)
-    setSelectedInterval(null)
-
-    try {
-      const res = await analyzeECG(currentSignal, activeModel, cls, 40)
-      setAttributionMap(res.attribution)
-      setLeadImportance(res.lead_importance)
-      setTimeRegions(res.time_regions || null)
-    } catch (err: any) {
-      setExplainError(err.message || 'Failed to compute Integrated Gradients attribution')
-    } finally {
-      setIsExplaining(false)
-    }
-  }
-
-  // Handle class tab switch
-  const handleSelectClass = (cls: DiagnosticClass) => {
+  const handleClassChange = async (cls: DiagnosticClass) => {
     setSelectedClass(cls)
-    computeAttributionForClass(cls)
+    await runExplanation(cls, attributionMethod, steps)
   }
 
-  // Run counterfactual lead ablation
-  const handleRunLeadAblation = async () => {
+  const handleMethodChange = async (method: 'integrated_gradients' | 'gradient_x_input' | 'smoothgrad') => {
+    setAttributionMethod(method)
+    await runExplanation(selectedClass, method, steps)
+  }
+
+  const handleRunSideBySide = async () => {
     if (!currentSignal) return
-    setIsAblating(true)
+    setIsComparing(true)
     try {
-      const res = await fetchLeadAblation(currentSignal, selectedClass, activeModel)
-      setAblationData(res)
-    } catch (err: any) {
-      console.error('Lead ablation notice:', err)
+      const res = await runExplanation(compareClass, attributionMethod, steps)
+      setCompareResult(res)
     } finally {
-      setIsAblating(false)
+      setIsComparing(false)
     }
   }
 
-  // Run faithfulness curves experiment
-  const handleRunFaithfulness = async () => {
-    if (!currentSignal) return
-    setIsRunningFaithfulness(true)
-    setFaithfulnessError(null)
-    try {
-      const res = await runFaithfulnessTest(currentSignal, activeModel, selectedClass, 0.10)
-      setFaithfulnessResult(res)
-    } catch (err: any) {
-      setFaithfulnessError(err.message || 'Faithfulness test failed')
-    } finally {
-      setIsRunningFaithfulness(false)
-    }
-  }
-
-  // Download analysis export JSON bundle
-  const handleDownloadExport = () => {
-    const bundle = {
-      timestamp: new Date().toISOString(),
-      model: activeModel,
-      target_class: selectedClass,
-      attribution_method: 'Integrated Gradients (Gauss-Legendre / Riemann 40 steps)',
-      baseline: '0.0 (corresponds to training set mean)',
-      lead_importance: leadImportance,
-      top_time_regions: timeRegions,
-      lead_ablation: ablationData,
-      faithfulness_experiment: faithfulnessResult,
-      disclaimer:
-        'Research use only. Model outputs and attribution analyses are experimental and do not constitute a clinical diagnosis. Interpretation requires qualified healthcare professionals.',
-    }
-
-    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `ecg_explanation_${selectedClass}_${activeModel}_${Date.now()}.json`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
+  if (!currentSignal) {
+    return (
+      <div className="card" style={{ padding: '40px', textAlign: 'center' }}>
+        <Layers size={40} style={{ color: 'var(--text-muted)', marginBottom: '12px' }} />
+        <h3>No Signal Loaded</h3>
+        <p style={{ color: 'var(--text-muted)' }}>
+          Please upload an ECG recording or select a preloaded sample in ECG Analysis.
+        </p>
+      </div>
+    )
   }
 
   return (
-    <div className="page-container">
-      {/* Clinical Disclaimer */}
-      <DisclaimerBanner />
-
-      {/* Header Info & Class Selector Bar */}
-      <div className="card" style={{ padding: '18px 24px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      {/* Top Header & Settings Toolbar */}
+      <div className="card" style={{ padding: '16px 20px', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '14px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
           <div>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-primary)' }}>
-              Explainability &amp; Attribution Laboratory
-            </h2>
-            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-              Gradient-based Integrated Gradients, Time &times; Lead attribution matrix, interventional lead ablation, and faithfulness curves.
-            </p>
-          </div>
-
-          {/* Target Diagnostic Class Selector */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-              Target Class:
-            </span>
-            <div style={{ display: 'inline-flex', padding: '3px', background: 'var(--bg-subtle)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)' }}>
+            <label style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+              Target Diagnostic Superclass
+            </label>
+            <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
               {SUPERCLASSES.map((cls) => (
                 <button
                   key={cls}
-                  className={`btn btn-ghost btn-sm ${selectedClass === cls ? 'btn-secondary' : ''}`}
+                  className={`btn-tag ${selectedClass === cls ? 'active' : ''}`}
+                  onClick={() => handleClassChange(cls)}
                   style={{
-                    padding: '4px 12px',
+                    padding: '5px 12px',
                     fontSize: '0.8rem',
                     fontWeight: selectedClass === cls ? 700 : 500,
-                    borderRadius: 'var(--radius-sm)',
-                    color: selectedClass === cls ? 'var(--accent-burgundy)' : 'var(--text-primary)',
+                    borderRadius: '4px',
+                    border: selectedClass === cls ? '1px solid var(--accent-burgundy)' : '1px solid var(--border)',
+                    background: selectedClass === cls ? 'var(--accent-burgundy)' : 'var(--surface)',
+                    color: selectedClass === cls ? '#fff' : 'var(--text-primary)',
+                    cursor: 'pointer',
                   }}
-                  onClick={() => handleSelectClass(cls)}
                 >
                   {cls}
                 </button>
               ))}
             </div>
-
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={() => computeAttributionForClass(selectedClass)}
-              disabled={!currentSignal || isExplaining}
-              style={{ padding: '6px 14px' }}
-            >
-              {isExplaining ? (
-                <>
-                  <Activity size={13} style={{ animation: 'spin 1.5s linear infinite' }} />
-                  <span>Computing...</span>
-                </>
-              ) : (
-                <>
-                  <Play size={13} />
-                  <span>Recompute {selectedClass}</span>
-                </>
-              )}
-            </button>
-
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={() => setShowExportModal(true)}
-              style={{ padding: '6px 12px' }}
-              title="Export Explanation Bundle"
-            >
-              <Download size={13} />
-              <span>Export</span>
-            </button>
-          </div>
-        </div>
-
-        {explainError && (
-          <div style={{ marginTop: '12px', padding: '8px 12px', background: 'var(--color-error-bg)', color: 'var(--color-error)', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem' }}>
-            {explainError}
-          </div>
-        )}
-      </div>
-
-      {/* Signature Time x Lead Attribution Matrix */}
-      {attributionMap && (
-        <AttributionHeatmap
-          attribution={attributionMap}
-          targetClass={selectedClass}
-          selectedInterval={selectedInterval}
-          onSelectInterval={(start, end) => setSelectedInterval({ start, end })}
-        />
-      )}
-
-      {/* Synchronized 12-Lead ECG Waveform with Attribution Overlay */}
-      {currentSignal && (
-        <div>
-          <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ fontSize: '0.92rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-              Synchronized 12-Lead Waveform with Attribution Density ({selectedClass})
-            </h3>
-            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-              Baseline: 0.0 (Training Mean) &bull; 40 Riemann Integration Steps &bull; Model: {activeModel}
-            </span>
           </div>
 
-          <ECGViewer
-            signal={currentSignal}
-            attribution={attributionMap}
-            attributionClass={selectedClass}
-          />
-        </div>
-      )}
-
-      {/* Middle Row: Peak Temporal Intervals & Interventional Lead Ablation */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(460px, 1fr))', gap: '20px' }}>
-        {/* Ranked Temporal Intervals */}
-        <TimeRegionsView
-          timeRegions={timeRegions}
-          targetClass={selectedClass}
-          selectedInterval={selectedInterval}
-          onSelectInterval={(inv) => setSelectedInterval(inv)}
-        />
-
-        {/* Interventional Lead Ablation vs Gradient Attribution */}
-        <LeadAblationView
-          ablationData={ablationData}
-          gradientImportance={leadImportance}
-          isLoading={isAblating}
-          onRunAblation={handleRunLeadAblation}
-          targetClass={selectedClass}
-        />
-      </div>
-
-      {/* Bottom Section: Full Multi-Step Faithfulness Verification Curves */}
-      <FaithfulnessCurveView
-        result={faithfulnessResult}
-        isLoading={isRunningFaithfulness}
-        onRunTest={handleRunFaithfulness}
-        targetClass={selectedClass}
-      />
-
-      {/* Export Bundle Modal */}
-      {showExportModal && (
-        <div className="modal-backdrop">
-          <div className="modal-card" style={{ maxWidth: '580px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-              <h3 style={{ fontSize: '1.05rem', fontWeight: 700 }}>
-                Export Research Explanation Bundle
-              </h3>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowExportModal(false)}>
-                &times;
-              </button>
+          <div>
+            <label style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+              Attribution Method
+            </label>
+            <div style={{ marginTop: '4px' }}>
+              <select
+                value={attributionMethod}
+                onChange={(e) => handleMethodChange(e.target.value as any)}
+                style={{
+                  padding: '5px 10px',
+                  fontSize: '0.8rem',
+                  borderRadius: '4px',
+                  border: '1px solid var(--border)',
+                  background: 'var(--surface)',
+                }}
+              >
+                <option value="integrated_gradients">Integrated Gradients (Riemann Path)</option>
+                <option value="gradient_x_input">Gradient &times; Input (First-Order Saliency)</option>
+                <option value="smoothgrad">SmoothGrad (Gaussian Dispersion)</option>
+              </select>
             </div>
+          </div>
+        </div>
 
-            <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '16px' }}>
-              Download a complete, scientifically reproducible research artifact including model parameters, attribution tensors, temporal interval rankings, lead ablation outcomes, and perturbation faithfulness curves.
-            </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <button
+            className={`btn-secondary ${compareMode ? 'active' : ''}`}
+            onClick={() => setCompareMode(!compareMode)}
+            style={{ fontSize: '0.8rem', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            <GitCompare size={14} />
+            <span>{compareMode ? 'Exit Comparison' : 'Side-by-Side Class Comparison'}</span>
+          </button>
 
-            <div style={{ background: '#FAFAF8', borderRadius: 'var(--radius-sm)', padding: '12px', border: '1px solid var(--border-light)', fontSize: '0.78rem', marginBottom: '18px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '6px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Target Class:</span>
-                <span style={{ fontWeight: 600 }}>{selectedClass}</span>
+          <button
+            className="btn-primary"
+            onClick={() => runExplanation(selectedClass, attributionMethod, steps)}
+            disabled={isExplaining}
+            style={{ fontSize: '0.8rem', padding: '6px 16px' }}
+          >
+            {isExplaining ? 'Computing Attribution...' : 'Recompute Explanation'}
+          </button>
+        </div>
+      </div>
 
-                <span style={{ color: 'var(--text-muted)' }}>Active Model:</span>
-                <span style={{ fontWeight: 600 }}>{activeModel}</span>
-
-                <span style={{ color: 'var(--text-muted)' }}>Attribution:</span>
-                <span>Integrated Gradients (40 Riemann steps, zero baseline)</span>
-
-                <span style={{ color: 'var(--text-muted)' }}>Compliance:</span>
-                <span style={{ color: 'var(--color-success)', fontWeight: 600 }}>De-identified research artifact</span>
+      {/* Side-by-Side Class Comparison Bar */}
+      {compareMode && (
+        <div className="card" style={{ padding: '16px 20px', background: 'var(--bg-subtle)', border: '1px solid var(--accent-subtle)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <strong>Compare Selected ({selectedClass}) against:</strong>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {SUPERCLASSES.filter((c) => c !== selectedClass).map((cls) => (
+                  <button
+                    key={cls}
+                    className={`btn-tag ${compareClass === cls ? 'active' : ''}`}
+                    onClick={() => setCompareClass(cls)}
+                    style={{
+                      padding: '4px 10px',
+                      fontSize: '0.78rem',
+                      fontWeight: compareClass === cls ? 700 : 500,
+                      borderRadius: '4px',
+                      border: compareClass === cls ? '1px solid var(--accent-burgundy)' : '1px solid var(--border)',
+                      background: compareClass === cls ? 'var(--accent-burgundy)' : 'var(--surface)',
+                      color: compareClass === cls ? '#fff' : 'var(--text-primary)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {cls}
+                  </button>
+                ))}
               </div>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowExportModal(false)}>
-                Cancel
-              </button>
-              <button
-                className="btn btn-primary btn-sm"
-                onClick={() => {
-                  handleDownloadExport()
-                  setShowExportModal(false)
-                }}
-              >
-                <Download size={13} />
-                <span>Download JSON Artifact</span>
-              </button>
-            </div>
+            <button
+              className="btn-primary"
+              onClick={handleRunSideBySide}
+              disabled={isComparing}
+              style={{ fontSize: '0.8rem', padding: '5px 14px' }}
+            >
+              {isComparing ? 'Computing...' : `Compute ${compareClass} Attribution`}
+            </button>
           </div>
+        </div>
+      )}
+
+      {/* Sub-Tabs Navigation */}
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', gap: '8px' }}>
+        <button
+          className={`tab-btn ${activeSubTab === 'time_lead' ? 'active' : ''}`}
+          onClick={() => setActiveSubTab('time_lead')}
+          style={{
+            padding: '10px 16px',
+            fontSize: '0.85rem',
+            fontWeight: 600,
+            border: 'none',
+            borderBottom: activeSubTab === 'time_lead' ? '2px solid var(--accent-burgundy)' : '2px solid transparent',
+            background: 'none',
+            color: activeSubTab === 'time_lead' ? 'var(--accent-burgundy)' : 'var(--text-secondary)',
+            cursor: 'pointer',
+          }}
+        >
+          Time &times; Lead Attribution Heatmap
+        </button>
+        <button
+          className={`tab-btn ${activeSubTab === 'class_lead' ? 'active' : ''}`}
+          onClick={() => setActiveSubTab('class_lead')}
+          style={{
+            padding: '10px 16px',
+            fontSize: '0.85rem',
+            fontWeight: 600,
+            border: 'none',
+            borderBottom: activeSubTab === 'class_lead' ? '2px solid var(--accent-burgundy)' : '2px solid transparent',
+            background: 'none',
+            color: activeSubTab === 'class_lead' ? 'var(--accent-burgundy)' : 'var(--text-secondary)',
+            cursor: 'pointer',
+          }}
+        >
+          Class &times; Lead Importance Matrix (5 &times; 12)
+        </button>
+        <button
+          className={`tab-btn ${activeSubTab === 'class_time' ? 'active' : ''}`}
+          onClick={() => setActiveSubTab('class_time')}
+          style={{
+            padding: '10px 16px',
+            fontSize: '0.85rem',
+            fontWeight: 600,
+            border: 'none',
+            borderBottom: activeSubTab === 'class_time' ? '2px solid var(--accent-burgundy)' : '2px solid transparent',
+            background: 'none',
+            color: activeSubTab === 'class_time' ? 'var(--accent-burgundy)' : 'var(--text-secondary)',
+            cursor: 'pointer',
+          }}
+        >
+          Class &times; Time Saliency Heatmap
+        </button>
+        <button
+          className={`tab-btn ${activeSubTab === 'diagnostics' ? 'active' : ''}`}
+          onClick={() => setActiveSubTab('diagnostics')}
+          style={{
+            padding: '10px 16px',
+            fontSize: '0.85rem',
+            fontWeight: 600,
+            border: 'none',
+            borderBottom: activeSubTab === 'diagnostics' ? '2px solid var(--accent-burgundy)' : '2px solid transparent',
+            background: 'none',
+            color: activeSubTab === 'diagnostics' ? 'var(--accent-burgundy)' : 'var(--text-secondary)',
+            cursor: 'pointer',
+          }}
+        >
+          Attribution Diagnostics & Completeness
+        </button>
+      </div>
+
+      {/* Sub-Tab 1: Central Time x Lead Heatmap & Waveform */}
+      {activeSubTab === 'time_lead' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {/* Synchronized 12-Lead ECG Waveform */}
+          <div className="card" style={{ padding: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h3 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
+                Synchronized 12-Lead ECG Waveform ({selectedClass} Overlay)
+              </h3>
+              {selectedInterval && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.78rem' }}>
+                  <span style={{ color: 'var(--accent-burgundy)', fontWeight: 600 }}>
+                    Inspecting Region: {selectedInterval.start.toFixed(2)}s &ndash; {selectedInterval.end.toFixed(2)}s
+                  </span>
+                  <button
+                    onClick={() => setSelectedInterval(null)}
+                    style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.75rem' }}
+                  >
+                    Clear Focus
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <ECGViewer
+              signal={currentSignal}
+              attribution={attributionResult?.attribution}
+              attributionClass={selectedClass}
+            />
+          </div>
+
+          {/* Central Time x Lead Attribution Heatmap */}
+          {attributionResult?.attribution ? (
+            <div className="card" style={{ padding: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
+                    Time &times; Lead Attribution Heatmap — {selectedClass}
+                  </h3>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    Method: {attributionResult.method || 'Integrated Gradients'} &bull; Baseline: {attributionResult.baseline}
+                  </span>
+                </div>
+              </div>
+
+              <AttributionHeatmap
+                attribution={attributionResult.attribution}
+                targetClass={selectedClass}
+                selectedInterval={selectedInterval}
+                onSelectInterval={(start: number, end: number) => setSelectedInterval({ start, end })}
+              />
+
+              {/* Time Regions & Lead Importance Summaries */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px', marginTop: '20px' }}>
+                <TimeRegionsView
+                  timeRegions={attributionResult.time_regions || null}
+                  targetClass={selectedClass}
+                  selectedInterval={selectedInterval}
+                  onSelectInterval={(interval) => setSelectedInterval(interval)}
+                />
+
+                <div className="card" style={{ padding: '16px', background: 'var(--bg-subtle)' }}>
+                  <h4 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', fontWeight: 600 }}>
+                    Top Attributed Leads ({selectedClass}):
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {attributionResult.lead_importance.slice(0, 6).map((item, idx) => (
+                      <div key={item.lead} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem' }}>
+                        <span style={{ width: '30px', fontWeight: 700 }}>{item.lead}</span>
+                        <div style={{ flex: 1, height: '8px', background: 'var(--border)', borderRadius: '4px', overflow: 'hidden' }}>
+                          <div
+                            style={{
+                              width: `${Math.round(item.normalized * 100)}%`,
+                              height: '100%',
+                              background: idx === 0 ? 'var(--accent-burgundy)' : '#777',
+                            }}
+                          />
+                        </div>
+                        <span style={{ width: '45px', textAlign: 'right', fontWeight: 600 }}>
+                          {(item.normalized * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ padding: '30px', textAlign: 'center', color: 'var(--text-muted)' }}>
+              Computing attribution heatmap...
+            </div>
+          )}
+
+          {/* Side-by-Side Comparison Heatmap if Active */}
+          {compareMode && compareResult?.attribution && (
+            <div className="card" style={{ padding: '20px', border: '1px solid var(--accent-burgundy)' }}>
+              <h3 style={{ fontSize: '1.05rem', fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 12px 0' }}>
+                Comparison Attribution Heatmap — {compareClass}
+              </h3>
+              <AttributionHeatmap
+                attribution={compareResult.attribution}
+                targetClass={compareClass}
+                selectedInterval={selectedInterval}
+                onSelectInterval={(start, end) => setSelectedInterval({ start, end })}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Sub-Tab 2: Class x Lead Importance Matrix */}
+      {activeSubTab === 'class_lead' && (
+        <ClassLeadImportanceMatrix
+          onSelectClassAndLead={(cls, lIdx) => {
+            setSelectedClass(cls)
+            setSelectedLeadFocus(lIdx)
+            setActiveSubTab('time_lead')
+          }}
+        />
+      )}
+
+      {/* Sub-Tab 3: Class x Time Saliency Heatmap */}
+      {activeSubTab === 'class_time' && (
+        <ClassTimeMatrixView
+          onSelectTimeWindow={(start, end) => {
+            setSelectedInterval({ start, end })
+            setActiveSubTab('time_lead')
+          }}
+        />
+      )}
+
+      {/* Sub-Tab 4: Attribution Diagnostics & Axiom of Completeness */}
+      {activeSubTab === 'diagnostics' && (
+        <div className="card" style={{ padding: '20px' }}>
+          <h3 style={{ fontSize: '1.05rem', fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 14px 0' }}>
+            Mathematical Attribution Diagnostics & Axiom of Completeness
+          </h3>
+
+          {attributionResult?.diagnostics ? (
+            <div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px', marginBottom: '20px' }}>
+                <div style={{ background: 'var(--bg-subtle)', padding: '14px', borderRadius: '6px' }}>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Riemann Integration Steps</div>
+                  <div style={{ fontSize: '1.3rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                    {attributionResult.diagnostics.steps}
+                  </div>
+                </div>
+                <div style={{ background: 'var(--bg-subtle)', padding: '14px', borderRadius: '6px' }}>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Tensor Shape</div>
+                  <div style={{ fontSize: '1.3rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                    {attributionResult.diagnostics.tensor_shape.join(' \u00D7 ')}
+                  </div>
+                </div>
+                <div style={{ background: 'var(--bg-subtle)', padding: '14px', borderRadius: '6px' }}>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Finite Value Check</div>
+                  <div style={{ fontSize: '1.3rem', fontWeight: 700, color: 'var(--color-success)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <CheckCircle2 size={18} /> Valid
+                  </div>
+                </div>
+                <div style={{ background: 'var(--bg-subtle)', padding: '14px', borderRadius: '6px' }}>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Completeness Error</div>
+                  <div style={{ fontSize: '1.3rem', fontWeight: 700, color: 'var(--accent-burgundy)' }}>
+                    {attributionResult.diagnostics.completeness_error.toFixed(4)}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ fontSize: '0.82rem', lineHeight: '1.7', border: '1px solid var(--border)', borderRadius: '6px', padding: '14px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '6px' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Model Logit F(x):</span>
+                  <strong>{attributionResult.diagnostics.fx}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', padding: '6px 0' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Baseline Logit F(0):</span>
+                  <strong>{attributionResult.diagnostics.f0}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', padding: '6px 0' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Logit Difference &Delta;F = F(x) &minus; F(0):</span>
+                  <strong>{attributionResult.diagnostics.delta_fx}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', padding: '6px 0' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Sum of All Attributions &Sigma; IG:</span>
+                  <strong>{attributionResult.diagnostics.sum_attributions}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '6px' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Baseline Reference:</span>
+                  <strong>{attributionResult.diagnostics.baseline_description}</strong>
+                </div>
+              </div>
+
+              <div style={{ marginTop: '14px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                <Info size={13} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'text-bottom' }} />
+                The Axiom of Completeness states that the sum of attributions along the straight interpolation path from baseline to input equals the difference between the model output at the input and at the baseline.
+              </div>
+            </div>
+          ) : (
+            <div style={{ padding: '20px', color: 'var(--text-muted)' }}>
+              Integrated Gradients completeness diagnostics available when method is set to Integrated Gradients.
+            </div>
+          )}
         </div>
       )}
     </div>

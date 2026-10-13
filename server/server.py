@@ -29,9 +29,16 @@ SRC_DIR = os.path.join(PROJECT_ROOT, "src")
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
+import scipy.signal
+
 from ecg_intelligence import CLASSES, LEADS, CLASS_NAMES, FS
 from ecg_intelligence.models.classifier import build_torch_model
-from ecg_intelligence.explainability.integrated_gradients import compute_integrated_gradients
+from ecg_intelligence.explainability.integrated_gradients import (
+    compute_integrated_gradients,
+    compute_integrated_gradients_with_diagnostics,
+    compute_gradient_x_input,
+    compute_smoothgrad,
+)
 from ecg_intelligence.explainability.attribution import compute_lead_attributions
 from ecg_intelligence.explainability.lead_ablation import compute_lead_ablation
 from ecg_intelligence.explainability.time_regions import extract_top_time_regions
@@ -431,7 +438,38 @@ class ExplainRequest(BaseModel):
     signal: List[List[float]]
     model: Optional[str] = None
     target_class: str
+    method: Optional[str] = "integrated_gradients"
     steps: Optional[int] = 40
+
+
+class SpectrogramRequest(BaseModel):
+    signal: List[List[float]]
+    lead: Optional[Union[str, int]] = 1
+    nperseg: Optional[int] = 64
+    noverlap: Optional[int] = 48
+
+
+class MorphologyRequest(BaseModel):
+    signal: List[List[float]]
+    lead: Optional[Union[str, int]] = 1
+
+
+class BatchExplainRequest(BaseModel):
+    signal: List[List[float]]
+    model: Optional[str] = None
+    method: Optional[str] = "integrated_gradients"
+    steps: Optional[int] = 20
+
+
+class ClassTimeMatrixRequest(BaseModel):
+    signal: List[List[float]]
+    model: Optional[str] = None
+    num_windows: Optional[int] = 20
+
+
+class FullLeadAblationMatrixRequest(BaseModel):
+    signal: List[List[float]]
+    model: Optional[str] = None
 
 
 class FaithfulnessRequest(BaseModel):
@@ -462,6 +500,7 @@ class RobustnessRequest(BaseModel):
     experiment_type: str = Field("gaussian_noise", description="Perturbation type (gaussian_noise, baseline_drift, lead_dropout, temporal_burst)")
     intensity: Optional[float] = Field(0.05, description="Perturbation amplitude")
     lead_idx: Optional[int] = Field(0, description="Lead index for lead dropout (0-11)")
+
 
 
 # ==========================================
@@ -1005,11 +1044,165 @@ def analyze_ecg(req: AnalyzeRequest):
     }
 
 
+# ==========================================
+# Signal Explorer Endpoints
+# ==========================================
+
+@app.post("/api/signal/spectrogram")
+def get_signal_spectrogram(req: SpectrogramRequest):
+    """
+    Computes real Short-Time Fourier Transform (STFT) for the selected lead,
+    returning power spectral density in dB, time bins, and clinical band energies.
+    """
+    try:
+        sig = ensure_1000x12(np.array(req.signal, dtype=np.float32))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid signal: {str(e)}")
+
+    lead_idx = 1  # Default to Lead II
+    if isinstance(req.lead, int) and 0 <= req.lead < 12:
+        lead_idx = req.lead
+    elif isinstance(req.lead, str):
+        if req.lead in LEADS:
+            lead_idx = LEADS.index(req.lead)
+        elif req.lead.isdigit() and 0 <= int(req.lead) < 12:
+            lead_idx = int(req.lead)
+
+    lead_name = LEADS[lead_idx]
+    lead_data = sig[:, lead_idx]
+
+    nperseg = min(max(16, req.nperseg or 64), 256)
+    noverlap = min(max(0, req.noverlap or 48), nperseg - 1)
+
+    # Compute STFT: sampling rate = 100 Hz
+    f, t, Zxx = scipy.signal.stft(lead_data, fs=FS, nperseg=nperseg, noverlap=noverlap)
+    mag_sq = np.abs(Zxx) ** 2
+    power_db = 10.0 * np.log10(mag_sq + 1e-12)
+
+    total_power = float(np.sum(mag_sq) + 1e-12)
+    vlf_power = float(np.sum(mag_sq[(f >= 0) & (f < 0.5), :]) / total_power)
+    lf_power = float(np.sum(mag_sq[(f >= 0.5) & (f < 4), :]) / total_power)
+    qrs_power = float(np.sum(mag_sq[(f >= 4) & (f <= 15), :]) / total_power)
+    hf_power = float(np.sum(mag_sq[(f > 15) & (f <= 40), :]) / total_power)
+    noise_power = float(np.sum(mag_sq[f > 40, :]) / total_power)
+
+    return {
+        "lead": lead_name,
+        "lead_idx": lead_idx,
+        "fs": FS,
+        "nperseg": nperseg,
+        "noverlap": noverlap,
+        "frequencies": [round(float(freq), 2) for freq in f],
+        "times": [round(float(tm), 3) for tm in t],
+        "power_db": [[round(float(val), 2) for val in row] for row in power_db],
+        "band_energies": {
+            "vlf_wander_0_0_5Hz": round(vlf_power * 100, 1),
+            "lf_p_t_waves_0_5_4Hz": round(lf_power * 100, 1),
+            "qrs_depolarization_4_15Hz": round(qrs_power * 100, 1),
+            "hf_myoelectric_15_40Hz": round(hf_power * 100, 1),
+            "noise_mains_40_50Hz": round(noise_power * 100, 1),
+        },
+        "interpretation": "Time-frequency spectrogram reveals spectral power distribution over time. Signal inspection only; not a diagnostic classifier."
+    }
+
+
+@app.post("/api/signal/morphology")
+def get_signal_morphology(req: MorphologyRequest):
+    """
+    Performs signal statistics and heuristic R-peak / beat detection (energy envelope),
+    calculating estimated heart rate, RR intervals, SDNN, and RMS amplitude.
+    """
+    try:
+        sig = ensure_1000x12(np.array(req.signal, dtype=np.float32))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid signal: {str(e)}")
+
+    lead_idx = 1
+    if isinstance(req.lead, int) and 0 <= req.lead < 12:
+        lead_idx = req.lead
+    elif isinstance(req.lead, str):
+        if req.lead in LEADS:
+            lead_idx = LEADS.index(req.lead)
+        elif req.lead.isdigit() and 0 <= int(req.lead) < 12:
+            lead_idx = int(req.lead)
+
+    lead_name = LEADS[lead_idx]
+    lead_data = sig[:, lead_idx]
+
+    sig_min = float(np.min(lead_data))
+    sig_max = float(np.max(lead_data))
+    sig_mean = float(np.mean(lead_data))
+    sig_std = float(np.std(lead_data))
+    rms = float(np.sqrt(np.mean(lead_data ** 2)))
+    snr_db = float(20 * np.log10(max(sig_std, 1e-4) / max(abs(sig_mean), 1e-4)))
+    baseline_drift = float(abs(sig_mean))
+
+    # R-peak detection using derivative squaring and moving integration
+    diff = np.diff(lead_data, prepend=lead_data[0])
+    sq = diff ** 2
+    win = np.ones(8) / 8.0
+    filtered = np.convolve(sq, win, mode="same")
+    min_dist = 35
+    thresh = float(np.mean(filtered) * 1.4)
+    peaks, _ = scipy.signal.find_peaks(filtered, height=thresh, distance=min_dist)
+
+    r_peaks = [int(p) for p in peaks]
+    r_peak_times = [round(float(p / FS), 3) for p in peaks]
+
+    rr_intervals_ms = []
+    estimated_hr = None
+    sdnn = None
+    rmssd = None
+
+    if len(peaks) > 1:
+        rr_sec = np.diff(peaks) / float(FS)
+        rr_intervals_ms = [round(float(rr * 1000), 1) for rr in rr_sec]
+        mean_rr = float(np.mean(rr_sec))
+        estimated_hr = round(60.0 / mean_rr, 1)
+        sdnn = round(float(np.std(rr_intervals_ms)), 1)
+        if len(rr_intervals_ms) > 1:
+            rmssd = round(float(np.sqrt(np.mean(np.diff(rr_intervals_ms) ** 2))), 1)
+
+    return {
+        "lead": lead_name,
+        "lead_idx": lead_idx,
+        "sampling_rate": FS,
+        "duration_sec": round(len(lead_data) / FS, 1),
+        "statistics": {
+            "min_mv": round(sig_min, 4),
+            "max_mv": round(sig_max, 4),
+            "mean_mv": round(sig_mean, 4),
+            "std_mv": round(sig_std, 4),
+            "rms_mv": round(rms, 4),
+            "estimated_snr_db": round(snr_db, 2),
+            "baseline_drift_mv": round(baseline_drift, 4)
+        },
+        "morphology": {
+            "detected_r_peaks": r_peaks,
+            "r_peak_times_sec": r_peak_times,
+            "beat_count": len(r_peaks),
+            "estimated_hr_bpm": estimated_hr,
+            "mean_rr_ms": round(float(np.mean(rr_intervals_ms)), 1) if rr_intervals_ms else None,
+            "rr_intervals_ms": rr_intervals_ms,
+            "sdnn_ms": sdnn,
+            "rmssd_ms": rmssd,
+            "delineation_status": "Estimated via heuristic signal-processing (bandpass & energy envelope)",
+            "caveat": "Detected beats and morphology points are heuristic signal estimates and must not be used as clinical findings or definitive diagnostic criteria."
+        }
+    }
+
+
+# ==========================================
+# Explainability Studio Endpoints
+# ==========================================
+
 @app.post("/api/explain")
 def explain_ecg(req: ExplainRequest):
     """
-    Computes Integrated Gradients attribution map and per-lead importance.
+    Computes attribution map and per-lead importance.
+    Supports Integrated Gradients, Gradient x Input, and SmoothGrad.
     """
+    t_start = time.time()
     model_name = req.model or _ACTIVE_MODEL
     net = get_model(model_name)
     ns = load_norm_stats()
@@ -1033,12 +1226,26 @@ def explain_ecg(req: ExplainRequest):
         f_tensor = torch.from_numpy(f_norm)
 
     t_idx = CLASSES.index(req.target_class)
+    method = (req.method or "integrated_gradients").lower().strip()
+
     try:
-        ig_tensor = compute_integrated_gradients(
-            net, x_tensor, f_tensor, t_idx, steps=req.steps or 40
-        )
-        ig_arr = ig_tensor.cpu().numpy()
-        top_lead_idx, lead_mags = compute_lead_attributions(ig_arr)
+        diagnostics = None
+        if method == "gradient_x_input":
+            attr_tensor = compute_gradient_x_input(net, x_tensor, f_tensor, t_idx)
+            baseline_desc = "None (first-order local gradient)"
+        elif method == "smoothgrad":
+            attr_tensor = compute_smoothgrad(net, x_tensor, f_tensor, t_idx, num_samples=15)
+            baseline_desc = "Gaussian noise dispersion around input"
+        else:
+            # Default: Integrated Gradients with diagnostics
+            method = "integrated_gradients"
+            attr_tensor, diagnostics = compute_integrated_gradients_with_diagnostics(
+                net, x_tensor, f_tensor, t_idx, steps=req.steps or 40
+            )
+            baseline_desc = "Zero tensor (corresponds to training fold mean)"
+
+        attr_arr = attr_tensor.cpu().numpy()
+        top_lead_idx, lead_mags = compute_lead_attributions(attr_arr)
         total_mag = sum(lead_mags) + 1e-9
 
         lead_importance = [
@@ -1052,20 +1259,199 @@ def explain_ecg(req: ExplainRequest):
         lead_importance.sort(key=lambda x: x["score"], reverse=True)
 
         # Extract top temporal regions
-        time_regions = extract_top_time_regions(ig_arr, window_size=15, num_regions=5)
+        time_regions = extract_top_time_regions(attr_arr, window_size=15, num_regions=5)
+        duration_ms = round((time.time() - t_start) * 1000, 1)
 
         return {
             "model": model_name,
             "target_class": req.target_class,
-            "steps": req.steps or 40,
-            "attribution": ig_arr.tolist(),
+            "method": method,
+            "steps": req.steps or 40 if method == "integrated_gradients" else None,
+            "duration_ms": duration_ms,
+            "attribution": attr_arr.tolist(),
             "lead_importance": lead_importance,
             "time_regions": time_regions,
             "top_lead": LEADS[top_lead_idx],
-            "baseline": "zero (corresponds to training fold mean)"
+            "baseline": baseline_desc,
+            "diagnostics": diagnostics
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Integrated Gradients computation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Attribution computation ({method}) failed: {str(e)}")
+
+
+@app.post("/api/explain/batch_matrix")
+def explain_batch_matrix(req: BatchExplainRequest):
+    """
+    Computes genuine class-specific attribution across ALL 5 diagnostic superclasses
+    (CD, HYP, MI, NORM, STTC) and 12 leads for the selected model.
+    Produces the Class x Lead Importance Heatmap.
+    """
+    model_name = req.model or _ACTIVE_MODEL
+    net = get_model(model_name)
+    ns = load_norm_stats()
+
+    try:
+        sig = ensure_1000x12(np.array(req.signal, dtype=np.float32))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid signal: {str(e)}")
+
+    x_norm = ((sig - ns["mu"]) / ns["sd"]).T[None].astype(np.float32)
+    x_tensor = torch.from_numpy(x_norm)
+
+    f_tensor = None
+    meta = MODEL_METADATA.get(model_name, {})
+    if meta.get("arch_mode") in ("hybrid", "gated", "feat"):
+        feat = extract_handcrafted_features(sig)
+        f_norm = ((feat - ns["fm"]) / ns["fs"])[None].astype(np.float32)
+        f_tensor = torch.from_numpy(f_norm)
+
+    method = (req.method or "integrated_gradients").lower().strip()
+    steps = req.steps or 20
+
+    magnitude_matrix = []
+    signed_matrix = []
+    class_results = {}
+
+    for c_idx, cls_name in enumerate(CLASSES):
+        if method == "gradient_x_input":
+            attr = compute_gradient_x_input(net, x_tensor, f_tensor, c_idx)
+        elif method == "smoothgrad":
+            attr = compute_smoothgrad(net, x_tensor, f_tensor, c_idx, num_samples=10)
+        else:
+            attr = compute_integrated_gradients(net, x_tensor, f_tensor, c_idx, steps=steps)
+
+        arr = attr.cpu().numpy()  # (12, 1000)
+        lead_mags = np.abs(arr).sum(axis=1)  # (12,)
+        lead_signed = arr.sum(axis=1)       # (12,)
+
+        magnitude_matrix.append([round(float(m), 4) for m in lead_mags])
+        signed_matrix.append([round(float(s), 4) for s in lead_signed])
+
+        top_l_idx = int(np.argmax(lead_mags))
+        class_results[cls_name] = {
+            "top_lead": LEADS[top_l_idx],
+            "total_magnitude": round(float(np.sum(lead_mags)), 4),
+            "lead_scores": [round(float(m), 4) for m in lead_mags]
+        }
+
+    return {
+        "model": model_name,
+        "method": method,
+        "classes": CLASSES,
+        "leads": LEADS,
+        "magnitude_matrix": magnitude_matrix,
+        "signed_matrix": signed_matrix,
+        "class_summaries": class_results,
+        "interpretation": "Class x Lead importance matrix showing genuine attribution magnitudes per class and lead. Absolute magnitude indicates lead saliency; signed value indicates directional influence."
+    }
+
+
+@app.post("/api/explain/class_time_matrix")
+def explain_class_time_matrix(req: ClassTimeMatrixRequest):
+    """
+    Computes a Class x Time attribution matrix across all 5 classes and N time windows.
+    Aggregates the real attribution tensor across leads within each time window.
+    """
+    model_name = req.model or _ACTIVE_MODEL
+    net = get_model(model_name)
+    ns = load_norm_stats()
+
+    try:
+        sig = ensure_1000x12(np.array(req.signal, dtype=np.float32))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid signal: {str(e)}")
+
+    x_norm = ((sig - ns["mu"]) / ns["sd"]).T[None].astype(np.float32)
+    x_tensor = torch.from_numpy(x_norm)
+
+    f_tensor = None
+    meta = MODEL_METADATA.get(model_name, {})
+    if meta.get("arch_mode") in ("hybrid", "gated", "feat"):
+        feat = extract_handcrafted_features(sig)
+        f_norm = ((feat - ns["fm"]) / ns["fs"])[None].astype(np.float32)
+        f_tensor = torch.from_numpy(f_norm)
+
+    num_windows = min(max(5, req.num_windows or 20), 50)
+    window_size = 1000 // num_windows
+    time_points = [round(float(w * window_size / FS), 2) for w in range(num_windows)]
+
+    magnitude_matrix = []
+    signed_matrix = []
+
+    for c_idx in range(len(CLASSES)):
+        attr = compute_integrated_gradients(net, x_tensor, f_tensor, c_idx, steps=20)
+        arr = attr.cpu().numpy()  # (12, 1000)
+
+        mag_windows = []
+        sgn_windows = []
+        for w in range(num_windows):
+            chunk = arr[:, w * window_size : (w + 1) * window_size]
+            mag_windows.append(round(float(np.abs(chunk).sum()), 4))
+            sgn_windows.append(round(float(chunk.sum()), 4))
+
+        magnitude_matrix.append(mag_windows)
+        signed_matrix.append(sgn_windows)
+
+    return {
+        "model": model_name,
+        "classes": CLASSES,
+        "num_windows": num_windows,
+        "time_points_sec": time_points,
+        "window_duration_sec": round(window_size / FS, 2),
+        "magnitude_matrix": magnitude_matrix,
+        "signed_matrix": signed_matrix,
+        "interpretation": "Class x Time attribution matrix showing temporal saliency windows across the 5 diagnostic classes."
+    }
+
+
+@app.post("/api/explain/lead_ablation_matrix")
+def explain_lead_ablation_matrix(req: FullLeadAblationMatrixRequest):
+    """
+    Computes a complete 5-class x 12-lead interventional lead ablation matrix,
+    measuring the empirical score change (Delta P) when zeroing out each lead.
+    """
+    model_name = req.model or _ACTIVE_MODEL
+    net = get_model(model_name)
+    ns = load_norm_stats()
+
+    try:
+        sig = ensure_1000x12(np.array(req.signal, dtype=np.float32))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid signal: {str(e)}")
+
+    x_norm = ((sig - ns["mu"]) / ns["sd"]).T[None].astype(np.float32)
+    x_tensor = torch.from_numpy(x_norm)
+
+    f_tensor = None
+    meta = MODEL_METADATA.get(model_name, {})
+    if meta.get("arch_mode") in ("hybrid", "gated", "feat"):
+        feat = extract_handcrafted_features(sig)
+        f_norm = ((feat - ns["fm"]) / ns["fs"])[None].astype(np.float32)
+        f_tensor = torch.from_numpy(f_norm)
+
+    net.eval()
+    matrix = []
+    with torch.no_grad():
+        p_orig_all = torch.sigmoid(net(x_tensor, f_tensor))[0].cpu().numpy()
+
+        for c_idx, cls_name in enumerate(CLASSES):
+            p_orig = float(p_orig_all[c_idx])
+            class_row = []
+            for l_idx in range(12):
+                x_ablated = x_tensor.clone()
+                x_ablated[0, l_idx, :] = 0.0
+                p_ablated = float(torch.sigmoid(net(x_ablated, f_tensor))[0, c_idx].item())
+                delta_p = p_orig - p_ablated
+                class_row.append(round(delta_p, 4))
+            matrix.append(class_row)
+
+    return {
+        "model": model_name,
+        "classes": CLASSES,
+        "leads": LEADS,
+        "delta_p_matrix": matrix,
+        "interpretation": "5-Class x 12-Lead interventional ablation matrix. Positive Delta P indicates the target class probability dropped when the lead was zero-masked (lead positively supported the class)."
+    }
 
 
 @app.post("/api/explain/lead_ablation")

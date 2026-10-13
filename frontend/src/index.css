@@ -572,6 +572,97 @@ button, input, select, textarea {
   background-color: var(--accent-subtle);
 }
 
+/* Card Utility */
+.card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-subtle);
+}
+
+/* Nav Badges */
+.nav-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 12px;
+  margin-left: auto;
+  line-height: 1.2;
+}
+
+.nav-badge.success {
+  background-color: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.nav-badge.accent {
+  background-color: var(--accent-subtle);
+  color: var(--accent-burgundy);
+}
+
+.nav-badge.info {
+  background-color: #EBF2FA;
+  color: #1A5276;
+}
+
+.nav-badge.warning {
+  background-color: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.nav-badge.default {
+  background-color: var(--bg-subtle);
+  color: var(--text-secondary);
+}
+
+/* Collapse Button & Collapsed Sidebar */
+.collapse-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+}
+
+.collapse-btn:hover {
+  background-color: var(--bg-subtle);
+  color: var(--text-primary);
+}
+
+.app-sidebar.collapsed {
+  width: 72px;
+}
+
+.app-sidebar.collapsed .brand-subtitle,
+.app-sidebar.collapsed .brand-title span,
+.app-sidebar.collapsed .nav-item-text,
+.app-sidebar.collapsed .nav-badge,
+.app-sidebar.collapsed .health-status-badge span {
+  display: none;
+}
+
+.app-sidebar.collapsed .sidebar-header {
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-sidebar.collapsed .collapse-btn {
+  margin-left: 0;
+}
+
+.app-sidebar.collapsed .nav-item {
+  justify-content: center;
+  padding: 12px 0;
+}
+
 /* Responsive adjustments */
 @media (max-width: 900px) {
   .app-sidebar {
@@ -595,3 +686,4 @@ button, input, select, textarea {
     padding: 0 16px;
   }
 }
+

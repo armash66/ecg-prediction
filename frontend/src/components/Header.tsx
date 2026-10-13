@@ -13,6 +13,7 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   title,
+  subtitle,
   activeModel,
   health,
   onOpenAnalysis,
@@ -21,7 +22,14 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="app-header">
       <div className="header-title-area">
-        <h1 className="page-title">{title}</h1>
+        <div>
+          <h1 className="page-title">{title}</h1>
+          {subtitle && (
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+              {subtitle}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="header-actions">

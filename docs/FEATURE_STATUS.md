@@ -21,4 +21,18 @@
 | **F-17** | Analysis History & Reproducibility (SQLite) | **Implemented and tested** | `GET /api/analyses`, `GET /api/analyses/{id}`, `DELETE /api/analyses/{id}`. |
 | **F-18** | Research Report Export (JSON & Printable HTML) | **Implemented and tested** | Full analysis bundle export with metadata, predictions, attributions, and disclaimers. |
 | **F-19** | System Health & Checkpoint Smoke Testing | **Implemented and tested** | `GET /api/health` reports device, uptime, cached models, and smoke test status. |
-| **F-20** | Automated Unit, Integration & E2E Test Suite | **Implemented and tested** | 49 pytest unit tests + automated E2E script `scripts/verify_workflow.py`. |
+| **F-20** | Automated Unit, Integration & E2E Test Suite | **Implemented and tested** | 56 pytest unit tests + automated E2E script `scripts/verify_workflow.py`. |
+| **F-21** | Expanded Collapsible 10-Destination Sidebar | **Implemented and tested** | Collapsible desktop/mobile sidebar with badges, Lucide icons, and active destination states. |
+| **F-22** | Signal Explorer & Advanced 12-Lead Studio | **Implemented and tested** | Single lead isolation, synchronized zoom/pan, physical quality diagnostics, CSV lead export. |
+| **F-23** | Time-Frequency STFT Spectrogram View | **Implemented and tested** | Real `scipy.signal.stft` 2D power dB heatmap (0-50 Hz) and clinical spectral band energy distribution. |
+| **F-24** | ECG Morphology & Heuristic R-Peak Delineation | **Implemented and tested** | Real bandpass energy peak detection, estimated HR (BPM), RR intervals, SDNN, RMSSD. |
+| **F-25** | 5-Class &times; 12-Lead Attribution Matrix | **Implemented and tested** | Real Integrated Gradients matrix across all 5 classes and 12 leads; click-to-focus navigation. |
+| **F-26** | Class &times; Time Temporal Saliency Heatmap | **Implemented and tested** | 5 diagnostic classes across 20 discrete time windows (0.50s bins) with signed/magnitude toggle. |
+| **F-27** | Multi-Method Attribution & Diagnostics | **Implemented and tested** | Integrated Gradients, Gradient &times; Input, SmoothGrad, and Axiom of Completeness error checks. |
+| **F-28** | Dedicated Multi-Model Comparison Studio | **Implemented and tested** | Full-page score heatmap, $\Delta P$ difference heatmap, threshold matrix, and consensus metrics. |
+| **F-29** | Dedicated Faithfulness Lab & 5x12 Ablation | **Implemented and tested** | Multi-step deletion/insertion curves, AUDC/AUIC, and complete 5-class $\times$ 12-lead ablation matrix. |
+| **F-30** | Dedicated Controlled Robustness Laboratory | **Implemented and tested** | Parameterized noise, drift, and lead dropout with stability score and waveform overlay. |
+| **F-31** | Dedicated Research Analytics & Leaderboard | **Implemented and tested** | Benchmark leaderboard, class-wise metric heatmap, validation threshold simulator, split protocol. |
+| **F-32** | Dedicated Analysis History & Comparison | **Implemented and tested** | SQLite search, model filtering, direct analysis restoration, and report generation. |
+| **F-33** | Dedicated Research Reports & Data Export Center | **Implemented and tested** | Live report iframe preview, printable HTML/PDF export, JSON session metadata, predictions CSV, curves CSV. |
+| **F-34** | Shared Analysis State Context | **Implemented and tested** | `AnalysisContext` persists uploaded signal, active model, predictions, and XAI across all 10 pages without state loss. |

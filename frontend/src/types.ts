@@ -1,5 +1,8 @@
 export type DiagnosticClass = 'CD' | 'HYP' | 'MI' | 'NORM' | 'STTC'
 
+export const LEADS: string[] = ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6']
+
+
 export interface ModelMetadata {
   id: string
   name: string
@@ -222,16 +225,124 @@ export interface AnalysisResponse {
   disclaimer: string
 }
 
+export type NavigationTab =
+  | 'overview'
+  | 'analysis'
+  | 'signal_explorer'
+  | 'explainability'
+  | 'model_comparison'
+  | 'faithfulness'
+  | 'robustness'
+  | 'research_analytics'
+  | 'history'
+  | 'reports'
+  | 'modellab'
+
 export interface ExplainResponse {
   model: string
   target_class: DiagnosticClass
-  steps: number
+  method?: string
+  steps?: number | null
+  duration_ms?: number
   attribution: number[][]
   lead_importance: LeadImportanceItem[]
   time_regions?: TimeRegionItem[] | null
   top_lead: string
   baseline: string
+  diagnostics?: {
+    steps: number
+    fx: number
+    f0: number
+    delta_fx: number
+    sum_attributions: number
+    completeness_error: number
+    finite_check: boolean
+    tensor_shape: number[]
+    baseline_description: string
+  } | null
 }
+
+export interface SpectrogramResponse {
+  lead: string
+  lead_idx: number
+  fs: number
+  nperseg: number
+  noverlap: number
+  frequencies: number[]
+  times: number[]
+  power_db: number[][]
+  band_energies: {
+    vlf_wander_0_0_5Hz: number
+    lf_p_t_waves_0_5_4Hz: number
+    qrs_depolarization_4_15Hz: number
+    hf_myoelectric_15_40Hz: number
+    noise_mains_40_50Hz: number
+  }
+  interpretation: string
+}
+
+export interface MorphologyResponse {
+  lead: string
+  lead_idx: number
+  sampling_rate: number
+  duration_sec: number
+  statistics: {
+    min_mv: number
+    max_mv: number
+    mean_mv: number
+    std_mv: number
+    rms_mv: number
+    estimated_snr_db: number
+    baseline_drift_mv: number
+  }
+  morphology: {
+    detected_r_peaks: number[]
+    r_peak_times_sec: number[]
+    beat_count: number
+    estimated_hr_bpm: number | null
+    mean_rr_ms: number | null
+    rr_intervals_ms: number[]
+    sdnn_ms: number | null
+    rmssd_ms: number | null
+    delineation_status: string
+    caveat: string
+  }
+}
+
+export interface BatchExplainMatrixResponse {
+  model: string
+  method: string
+  classes: DiagnosticClass[]
+  leads: string[]
+  magnitude_matrix: number[][]
+  signed_matrix: number[][]
+  class_summaries: Record<DiagnosticClass, {
+    top_lead: string
+    total_magnitude: number
+    lead_scores: number[]
+  }>
+  interpretation: string
+}
+
+export interface ClassTimeMatrixResponse {
+  model: string
+  classes: DiagnosticClass[]
+  num_windows: number
+  time_points_sec: number[]
+  window_duration_sec: number
+  magnitude_matrix: number[][]
+  signed_matrix: number[][]
+  interpretation: string
+}
+
+export interface LeadAblationMatrixResponse {
+  model: string
+  classes: DiagnosticClass[]
+  leads: string[]
+  delta_p_matrix: number[][]
+  interpretation: string
+}
+
 
 export interface FaithfulnessResponse {
   model: string

@@ -1,94 +1,83 @@
-import React, { useState, useEffect } from 'react'
-import {
-  fetchHealth,
-  fetchModels,
-  fetchMetrics,
-  fetchSamples,
-  fetchSampleDetail,
-} from './api'
-import {
-  BackendHealth,
-  ModelMetadata,
-  MetricsResponse,
-  PreloadedSampleSummary,
-  DiagnosticClass,
-} from './types'
+import React from 'react'
+import { AnalysisProvider, useAnalysis } from './context/AnalysisContext'
+import { NavigationTab } from './types'
 import { Sidebar } from './components/Sidebar'
 import { Header } from './components/Header'
 import { OverviewView } from './components/OverviewView'
 import { ECGAnalysisView } from './components/ECGAnalysisView'
-import { ModelLabView } from './components/ModelLabView'
+import { SignalExplorerView } from './components/SignalExplorerView'
 import { ExplainabilityView } from './components/ExplainabilityView'
+import { ModelComparisonView } from './components/ModelComparisonView'
+import { FaithfulnessLabView } from './components/FaithfulnessLabView'
+import { RobustnessLabView } from './components/RobustnessLabView'
+import { ResearchAnalyticsView } from './components/ResearchAnalyticsView'
+import { AnalysisHistoryView } from './components/AnalysisHistoryView'
+import { ReportsExportView } from './components/ReportsExportView'
+import { ModelLabView } from './components/ModelLabView'
 
-type TabType = 'overview' | 'analysis' | 'modellab' | 'explainability'
+const TAB_TITLES: Record<NavigationTab, { title: string; subtitle: string }> = {
+  overview: {
+    title: 'Research Overview Dashboard',
+    subtitle: 'PTB-XL Benchmark Highlights & System Status',
+  },
+  analysis: {
+    title: '12-Lead ECG Analysis Workspace',
+    subtitle: 'Multilabel Inference, Threshold Interpretation & Signal Diagnostics',
+  },
+  signal_explorer: {
+    title: 'Signal Explorer & Time-Frequency Studio',
+    subtitle: 'High-Resolution 12-Lead Viewer, STFT Spectrogram & Morphology Metrics',
+  },
+  explainability: {
+    title: 'Explainability & Attribution Studio',
+    subtitle: 'Time \u00D7 Lead Heatmaps, Class \u00D7 Lead Matrices & Diagnostic Completeness',
+  },
+  model_comparison: {
+    title: 'Multi-Model Evaluation & Agreement',
+    subtitle: 'Simultaneous Multi-Model Inference, \u0394P Heatmaps & Consensus Matrix',
+  },
+  faithfulness: {
+    title: 'Faithfulness & Perturbation Laboratory',
+    subtitle: 'Deletion / Insertion Trajectories, AUDC / AUIC & 12-Lead Ablation',
+  },
+  robustness: {
+    title: 'Controlled Robustness & Stress-Testing',
+    subtitle: 'Electrode Jitter, Baseline Drift, Lead Dropout & Stability Scoring',
+  },
+  research_analytics: {
+    title: 'Research Benchmark Analytics & Leaderboard',
+    subtitle: 'Hold-Out Test Fold 10 Performance Metrics & Validation Thresholds',
+  },
+  history: {
+    title: 'Analysis Session History & Persistence',
+    subtitle: 'SQLite Database of Recorded Analyses, Inferences & Reports',
+  },
+  reports: {
+    title: 'Research Reports & Data Export Center',
+    subtitle: 'Printable HTML/PDF Reports, JSON Records & CSV Experiment Tables',
+  },
+  modellab: {
+    title: 'Comparative Model Laboratory',
+    subtitle: 'Architecture Specifications, Checkpoint Registry & Metric Browser',
+  },
+}
 
-export const App: React.FC = () => {
-  const [currentTab, setCurrentTab] = useState<TabType>('overview')
-  const [activeModel, setActiveModel] = useState<string>('seq')
-  const [health, setHealth] = useState<BackendHealth | null>(null)
-  const [models, setModels] = useState<ModelMetadata[]>([])
-  const [metrics, setMetrics] = useState<MetricsResponse | null>(null)
-  const [samples, setSamples] = useState<PreloadedSampleSummary[]>([])
-  const [sharedSignal, setSharedSignal] = useState<number[][] | null>(null)
-  const [explainTargetClass, setExplainTargetClass] = useState<DiagnosticClass>('MI')
+const AppContent: React.FC = () => {
+  const {
+    currentTab,
+    setCurrentTab,
+    activeModel,
+    setActiveModel,
+    health,
+    models,
+    metrics,
+    samples,
+    setSelectedClass,
+    currentSignal,
+    setSignal,
+  } = useAnalysis()
 
-  // Poll backend health and initialize data
-  useEffect(() => {
-    const initData = async () => {
-      try {
-        const [h, mList, mets, samp] = await Promise.all([
-          fetchHealth().catch(() => null),
-          fetchModels().catch(() => ({ active_model: 'seq', models: [] })),
-          fetchMetrics().catch(() => null),
-          fetchSamples().catch(() => ({ total: 0, samples: [] })),
-        ])
-
-        if (h) {
-          setHealth(h)
-          setActiveModel(h.active_model)
-        }
-        if (mList?.models) {
-          setModels(mList.models)
-          if (mList.active_model) setActiveModel(mList.active_model)
-        }
-        if (mets) {
-          setMetrics(mets)
-        }
-        if (samp?.samples) {
-          setSamples(samp.samples)
-        }
-
-        // Load first test sample into shared signal for instant inspection
-        const firstSample = await fetchSampleDetail(0).catch(() => null)
-        if (firstSample?.signal) {
-          setSharedSignal(firstSample.signal)
-        }
-      } catch (err) {
-        console.error('Initialization notice:', err)
-      }
-    }
-
-    initData()
-
-    // Health poll every 10 seconds
-    const interval = setInterval(async () => {
-      try {
-        const h = await fetchHealth()
-        setHealth(h)
-      } catch {
-        setHealth((prev) => (prev ? { ...prev, status: 'offline' } : null))
-      }
-    }, 10000)
-
-    return () => clearInterval(interval)
-  }, [])
-
-  const tabTitles: Record<TabType, string> = {
-    overview: 'Research Overview Dashboard',
-    analysis: '12-Lead ECG Analysis Workspace',
-    modellab: 'Comparative Model Laboratory',
-    explainability: 'Explainability & Attribution Analysis',
-  }
+  const { title, subtitle } = TAB_TITLES[currentTab]
 
   return (
     <div className="app-container">
@@ -100,58 +89,72 @@ export const App: React.FC = () => {
 
       <div className="app-main">
         <Header
-          title={tabTitles[currentTab]}
+          title={title}
+          subtitle={subtitle}
           activeModel={activeModel}
           health={health}
           showAnalyzeButton={currentTab !== 'analysis'}
           onOpenAnalysis={() => setCurrentTab('analysis')}
         />
 
-        {currentTab === 'overview' && (
-          <OverviewView
-            metrics={metrics}
-            health={health}
-            onNavigateToAnalysis={() => setCurrentTab('analysis')}
-            onNavigateToModelLab={() => setCurrentTab('modellab')}
-          />
-        )}
+        <main className="page-container" style={{ padding: '24px 32px' }}>
+          {currentTab === 'overview' && (
+            <OverviewView
+              metrics={metrics}
+              health={health}
+              onNavigateToAnalysis={() => setCurrentTab('analysis')}
+              onNavigateToModelLab={() => setCurrentTab('modellab')}
+            />
+          )}
 
-        {currentTab === 'analysis' && (
-          <ECGAnalysisView
-            samples={samples}
-            activeModel={activeModel}
-            health={health}
-            onNavigateToExplain={(cls) => {
-              if (cls) setExplainTargetClass(cls)
-              setCurrentTab('explainability')
-            }}
-            onSignalChange={(sig) => setSharedSignal(sig)}
-            currentSignalProp={sharedSignal}
-          />
-        )}
+          {currentTab === 'analysis' && (
+            <ECGAnalysisView
+              samples={samples}
+              activeModel={activeModel}
+              health={health}
+              onNavigateToExplain={(cls) => {
+                if (cls) setSelectedClass(cls)
+                setCurrentTab('explainability')
+              }}
+              onSignalChange={(sig) => setSignal(sig)}
+              currentSignalProp={currentSignal}
+            />
+          )}
 
-        {currentTab === 'modellab' && (
-          <ModelLabView
-            models={models}
-            activeModel={activeModel}
-            onModelSwitched={(newM) => setActiveModel(newM)}
-          />
-        )}
+          {currentTab === 'signal_explorer' && <SignalExplorerView />}
 
-        {currentTab === 'explainability' && (
-          <ExplainabilityView
-            currentSignal={sharedSignal}
-            activeModel={activeModel}
-            samples={samples}
-            targetClass={explainTargetClass}
-            onSelectSample={async (idx) => {
-              const res = await fetchSampleDetail(idx).catch(() => null)
-              if (res?.signal) setSharedSignal(res.signal)
-            }}
-          />
-        )}
+          {currentTab === 'explainability' && <ExplainabilityView />}
+
+          {currentTab === 'model_comparison' && <ModelComparisonView />}
+
+          {currentTab === 'faithfulness' && <FaithfulnessLabView />}
+
+          {currentTab === 'robustness' && <RobustnessLabView />}
+
+          {currentTab === 'research_analytics' && <ResearchAnalyticsView />}
+
+          {currentTab === 'history' && <AnalysisHistoryView />}
+
+          {currentTab === 'reports' && <ReportsExportView />}
+
+          {currentTab === 'modellab' && (
+            <ModelLabView
+              models={models}
+              activeModel={activeModel}
+              onModelSwitched={(newM) => setActiveModel(newM)}
+            />
+          )}
+        </main>
       </div>
     </div>
+  )
+}
+
+export const App: React.FC = () => {
+  return (
+    <AnalysisProvider>
+      <AppContent />
+    </AnalysisProvider>
   )
 }
 
