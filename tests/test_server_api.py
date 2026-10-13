@@ -147,3 +147,59 @@ def test_serve_frontend():
     res = client.get("/")
     assert res.status_code == 200
     assert "root" in res.text
+
+
+def test_api_artifacts():
+    res = client.get("/api/artifacts")
+    assert res.status_code == 200
+    data = res.json()
+    assert "artifacts" in data
+    assert len(data["artifacts"]) > 0
+
+
+def test_api_compare():
+    dummy = np.random.randn(1000, 12).tolist()
+    res = client.post("/api/ecg/compare", json={"signal": dummy, "models": ["seq", "cnn"]})
+    assert res.status_code == 200
+    data = res.json()
+    assert "models" in data
+    assert "seq" in data["models"]
+    assert "cnn" in data["models"]
+    assert "agreement" in data
+
+
+def test_api_robustness():
+    dummy = np.random.randn(1000, 12).tolist()
+    res = client.post("/api/robustness", json={"signal": dummy, "model": "seq", "experiment_type": "gaussian_noise", "intensity": 0.05})
+    assert res.status_code == 200
+    data = res.json()
+    assert "shifts" in data
+    assert "stability_score" in data
+
+
+def test_api_analyses_persistence_and_report():
+    dummy = np.random.randn(1000, 12).tolist()
+    res = client.post("/api/ecg/analyze", json={"signal": dummy, "model": "seq"})
+    assert res.status_code == 200
+    anl_id = res.json().get("analysis_id")
+    assert anl_id is not None
+
+    # Retrieve list
+    list_res = client.get("/api/analyses")
+    assert list_res.status_code == 200
+    assert list_res.json()["total"] > 0
+
+    # Retrieve specific detail
+    detail_res = client.get(f"/api/analyses/{anl_id}")
+    assert detail_res.status_code == 200
+    assert detail_res.json()["id"] == anl_id
+
+    # Retrieve report
+    rep_res = client.get(f"/api/analyses/{anl_id}/report")
+    assert rep_res.status_code == 200
+    assert "Research Report" in rep_res.text
+
+    # Delete
+    del_res = client.delete(f"/api/analyses/{anl_id}")
+    assert del_res.status_code == 200
+

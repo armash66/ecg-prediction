@@ -133,6 +133,9 @@ export interface SignalMetadata {
   mean_val: number
   std_val: number
   validation_status: 'valid' | 'warning' | 'rejected'
+  quality_status?: 'optimal' | 'acceptable_with_warnings' | 'poor' | 'rejected'
+  quality_score?: number
+  quality_warnings?: string[]
 }
 
 export interface ValidationResponse {
@@ -204,6 +207,7 @@ export interface InsertionPoint {
 }
 
 export interface AnalysisResponse {
+  analysis_id?: string
   model: string
   model_display_name: string
   latency_ms: number
@@ -249,4 +253,77 @@ export interface FaithfulnessResponse {
   audc_drop_ratio?: number
   interpretation: string
   note: string
+}
+
+export interface ArtifactItem {
+  filename: string
+  size_bytes: number
+  size_mb: number
+  modified: string
+  type: 'checkpoint' | 'dataset_cache' | 'artifact'
+  verified: boolean
+  param_count: number | null
+}
+
+export interface MultiModelComparisonResponse {
+  models: Record<string, {
+    display_name: string
+    latency_ms: number
+    probabilities: Record<DiagnosticClass, number>
+    predictions: PredictionResultItem[]
+    error?: string
+  }>
+  agreement: Record<DiagnosticClass, {
+    positive_count: number
+    total_models: number
+    agreement_ratio: number
+    unanimous: boolean
+    consensus_detected: boolean
+  }>
+  classes: DiagnosticClass[]
+}
+
+export interface RobustnessShiftItem {
+  original: number
+  perturbed: number
+  delta: number
+  percent_change: number
+}
+
+export interface RobustnessResponse {
+  model: string
+  experiment_type: string
+  description: string
+  shifts: Record<DiagnosticClass, RobustnessShiftItem>
+  mean_abs_delta: number
+  stability_score: number
+  perturbed_signal_preview: number[][]
+}
+
+export interface SavedAnalysisSummary {
+  id: string
+  timestamp: number
+  created_at: string
+  filename: string
+  model_name: string
+  predictions: PredictionResultItem[]
+  probabilities: Record<DiagnosticClass, number>
+  latency_ms: number
+  explain_class: string
+}
+
+export interface SavedAnalysisDetail {
+  id: string
+  timestamp: number
+  created_at: string
+  filename: string
+  model_name: string
+  signal: number[][] | null
+  metadata: SignalMetadata
+  predictions: PredictionResultItem[]
+  probabilities: Record<DiagnosticClass, number>
+  thresholds: Record<DiagnosticClass, number>
+  latency_ms: number
+  explain_class: string
+  notes: string
 }

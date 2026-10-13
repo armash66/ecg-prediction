@@ -26,10 +26,14 @@ import {
   validateSignalFile,
   validateSignalJson,
   analyzeECG,
-  fetchSampleDetail
+  fetchSampleDetail,
+  getAnalysisReportUrl
 } from '../api'
 import { ECGViewer } from './ECGViewer'
 import { DisclaimerBanner } from './DisclaimerBanner'
+import { MultiModelComparisonModal } from './MultiModelComparisonModal'
+import { RobustnessModal } from './RobustnessModal'
+import { AnalysisHistoryModal } from './AnalysisHistoryModal'
 
 interface ECGAnalysisViewProps {
   samples: PreloadedSampleSummary[]
@@ -68,6 +72,9 @@ export const ECGAnalysisView: React.FC<ECGAnalysisViewProps> = ({
   // Export Modal State
   const [showExportModal, setShowExportModal] = useState<boolean>(false)
   const [showInputModal, setShowInputModal] = useState<boolean>(false)
+  const [showCompareModal, setShowCompareModal] = useState<boolean>(false)
+  const [showRobustnessModal, setShowRobustnessModal] = useState<boolean>(false)
+  const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false)
 
   // Automatically load the first sample on mount
   useEffect(() => {
@@ -236,6 +243,21 @@ export const ECGAnalysisView: React.FC<ECGAnalysisViewProps> = ({
                 <span>Validated 12 Leads &bull; 1000 Samples &bull; 100 Hz</span>
               </span>
 
+              {signalMetadata.quality_status && (
+                <span
+                  className={`badge ${
+                    signalMetadata.quality_status === 'optimal'
+                      ? 'badge-success'
+                      : signalMetadata.quality_status === 'acceptable_with_warnings'
+                      ? 'badge-warning'
+                      : 'badge-error'
+                  }`}
+                  title={signalMetadata.quality_warnings?.join(' | ') || 'Signal quality verified optimal'}
+                >
+                  Quality: {signalMetadata.quality_status.replace(/_/g, ' ').toUpperCase()} (Score: {signalMetadata.quality_score ?? 1.0})
+                </span>
+              )}
+
               {groundTruthLabels.length > 0 && (
                 <span className="badge badge-neutral" title="Verified Fold 10 Test Label">
                   Ground Truth: <strong>{groundTruthLabels.join(', ')}</strong>
@@ -268,26 +290,72 @@ export const ECGAnalysisView: React.FC<ECGAnalysisViewProps> = ({
         />
       )}
 
-      {/* Primary Action Button: Analyze ECG */}
-      <div style={{ display: 'flex', justifyContent: 'center' }}>
+      {/* Action Buttons: Inference, Multi-Model Comparison, Robustness, History */}
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
         <button
           className="btn btn-primary"
-          style={{ padding: '12px 32px', fontSize: '1rem', fontWeight: 600, boxShadow: 'var(--shadow-card)' }}
+          style={{ padding: '12px 28px', fontSize: '0.92rem', fontWeight: 600, boxShadow: 'var(--shadow-card)' }}
           onClick={handleRunAnalysis}
           disabled={!currentSignal || isAnalyzing}
         >
           {isAnalyzing ? (
             <>
-              <Activity size={18} style={{ animation: 'spin 1.5s linear infinite' }} />
+              <Activity size={17} style={{ animation: 'spin 1.5s linear infinite' }} />
               <span>Executing Model Inference ({activeModel.toUpperCase()})...</span>
             </>
           ) : (
             <>
-              <Play size={18} />
+              <Play size={17} />
               <span>Analyze ECG with {activeModel.toUpperCase()}</span>
             </>
           )}
         </button>
+
+        <button
+          className="btn"
+          style={{ padding: '12px 18px', fontSize: '0.85rem', fontWeight: 600, backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '6px' }}
+          onClick={() => setShowCompareModal(true)}
+          disabled={!currentSignal}
+          title="Compare predictions across all available architectures"
+        >
+          <Layers size={15} color="var(--accent-burgundy)" />
+          <span>Compare Models</span>
+        </button>
+
+        <button
+          className="btn"
+          style={{ padding: '12px 18px', fontSize: '0.85rem', fontWeight: 600, backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '6px' }}
+          onClick={() => setShowRobustnessModal(true)}
+          disabled={!currentSignal}
+          title="Run noise, baseline wander, and lead dropout stability tests"
+        >
+          <Activity size={15} color="var(--accent-burgundy)" />
+          <span>Robustness Test</span>
+        </button>
+
+        <button
+          className="btn"
+          style={{ padding: '12px 18px', fontSize: '0.85rem', fontWeight: 600, backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '6px' }}
+          onClick={() => setShowHistoryModal(true)}
+          title="Browse saved analyses from local SQLite persistence"
+        >
+          <FolderOpen size={15} />
+          <span>History</span>
+        </button>
+
+        {analysisResult?.analysis_id && (
+          <a
+            href={getAnalysisReportUrl(analysisResult.analysis_id)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn"
+            style={{ padding: '12px 18px', fontSize: '0.85rem', fontWeight: 600, textDecoration: 'none', backgroundColor: 'var(--accent-subtle)', color: 'var(--accent-burgundy)', border: '1px solid var(--accent-burgundy)', display: 'flex', alignItems: 'center', gap: '6px' }}
+            title="Open printable Clinical Research Report"
+          >
+            <Download size={15} />
+            <span>Printable Report</span>
+          </a>
+        )}
       </div>
 
       {/* Analysis Error Message */}
@@ -655,6 +723,50 @@ export const ECGAnalysisView: React.FC<ECGAnalysisViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Multi-Model Comparison Modal */}
+      {showCompareModal && (
+        <MultiModelComparisonModal
+          signal={currentSignal}
+          onClose={() => setShowCompareModal(false)}
+        />
+      )}
+
+      {/* Controlled Robustness Testing Modal */}
+      {showRobustnessModal && (
+        <RobustnessModal
+          signal={currentSignal}
+          activeModel={activeModel}
+          onClose={() => setShowRobustnessModal(false)}
+        />
+      )}
+
+      {/* Analysis History Modal */}
+      {showHistoryModal && (
+        <AnalysisHistoryModal
+          onClose={() => setShowHistoryModal(false)}
+          onReopenAnalysis={(saved) => {
+            if (saved.signal) {
+              setCurrentSignal(saved.signal)
+              onSignalChange?.(saved.signal)
+            }
+            setAnalysisResult({
+              analysis_id: saved.id,
+              model: saved.model_name,
+              model_display_name: saved.model_name.toUpperCase(),
+              latency_ms: saved.latency_ms,
+              probabilities: saved.probabilities,
+              thresholds: saved.thresholds,
+              predictions: saved.predictions,
+              gate_weight_deep: null,
+              explain_class: saved.explain_class || null,
+              attribution: null,
+              lead_importance: null,
+              disclaimer: "Research use only.",
+            })
+          }}
+        />
       )}
     </div>
   )

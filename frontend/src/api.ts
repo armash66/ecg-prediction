@@ -170,3 +170,71 @@ export async function fetchLeadAblation(
   return res.json()
 }
 
+export async function fetchArtifacts(): Promise<{ artifacts: any[] }> {
+  const res = await fetch(`${BASE_URL}/api/artifacts`)
+  if (!res.ok) throw new Error(`Failed to fetch artifacts: ${res.statusText}`)
+  return res.json()
+}
+
+export async function compareModels(
+  signal: number[][],
+  models?: string[]
+): Promise<any> {
+  const res = await fetch(`${BASE_URL}/api/ecg/compare`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ signal, models }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Model comparison failed')
+  }
+  return res.json()
+}
+
+export async function testRobustness(
+  signal: number[][],
+  model?: string,
+  experimentType: string = 'gaussian_noise',
+  intensity: number = 0.05,
+  leadIdx: number = 0
+): Promise<any> {
+  const res = await fetch(`${BASE_URL}/api/robustness`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      signal,
+      model,
+      experiment_type: experimentType,
+      intensity,
+      lead_idx: leadIdx,
+    }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Robustness test failed')
+  }
+  return res.json()
+}
+
+export async function fetchAnalyses(limit: number = 30): Promise<{ total: number; analyses: any[] }> {
+  const res = await fetch(`${BASE_URL}/api/analyses?limit=${limit}`)
+  if (!res.ok) throw new Error(`Failed to fetch analysis history: ${res.statusText}`)
+  return res.json()
+}
+
+export async function fetchAnalysisDetail(id: string): Promise<any> {
+  const res = await fetch(`${BASE_URL}/api/analyses/${id}`)
+  if (!res.ok) throw new Error(`Failed to load analysis ${id}: ${res.statusText}`)
+  return res.json()
+}
+
+export async function deleteAnalysis(id: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/analyses/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`Failed to delete analysis: ${res.statusText}`)
+}
+
+export function getAnalysisReportUrl(id: string): string {
+  return `${BASE_URL}/api/analyses/${id}/report`
+}
+

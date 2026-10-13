@@ -10,6 +10,8 @@ import sys
 import glob
 import json
 import time
+import uuid
+import sqlite3
 import tempfile
 from typing import Optional, List, Dict, Any, Union
 import numpy as np
@@ -79,6 +81,126 @@ _ACTIVE_MODEL: str = "seq"  # Default to best macro AUROC model
 _SERVER_START_TIME = time.time()
 _INFERENCE_COUNT = 0
 _LAST_INFERENCE_META: Optional[Dict[str, Any]] = None
+# Persistent History Database
+DB_PATH = os.path.join(CACHE_DIR, "analyses_history.db")
+
+def init_history_db():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS analyses (
+            id TEXT PRIMARY KEY,
+            timestamp REAL,
+            created_at TEXT,
+            filename TEXT,
+            model_name TEXT,
+            signal_data TEXT,
+            metadata_json TEXT,
+            predictions_json TEXT,
+            probabilities_json TEXT,
+            thresholds_json TEXT,
+            latency_ms REAL,
+            explain_class TEXT,
+            notes TEXT
+        )
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"History DB initialization notice: {e}")
+
+init_history_db()
+
+
+def save_analysis_record(
+    record_id: str,
+    filename: str,
+    model_name: str,
+    signal_arr: np.ndarray,
+    meta: Dict[str, Any],
+    preds: List[Dict[str, Any]],
+    probs: Dict[str, float],
+    thresholds: Dict[str, float],
+    latency_ms: float,
+    explain_class: Optional[str] = None
+):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("""
+        INSERT OR REPLACE INTO analyses (
+            id, timestamp, created_at, filename, model_name, signal_data,
+            metadata_json, predictions_json, probabilities_json, thresholds_json,
+            latency_ms, explain_class, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            record_id,
+            time.time(),
+            time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+            filename,
+            model_name,
+            json.dumps(signal_arr.tolist()),
+            json.dumps(meta),
+            json.dumps(preds),
+            json.dumps(probs),
+            json.dumps(thresholds),
+            latency_ms,
+            explain_class or "",
+            ""
+        ))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Warning: Failed to persist analysis to SQLite: {e}")
+
+
+def analyze_signal_quality(sig: np.ndarray) -> Dict[str, Any]:
+    """
+    Evaluates physical signal quality and returns warnings and a normalized quality score.
+    sig: (1000, 12) float32
+    """
+    warnings = []
+    # Check NaN / Inf
+    if not np.isfinite(sig).all():
+        return {
+            "status": "rejected",
+            "quality_score": 0.0,
+            "warnings": ["Signal contains NaN or infinite numerical samples."]
+        }
+    
+    # Check near-constant / flatlines (std < 1e-4 mV)
+    lead_stds = np.std(sig, axis=0)
+    flat_leads = [LEADS[i] for i, s in enumerate(lead_stds) if s < 1e-4]
+    if flat_leads:
+        warnings.append(f"Near-constant / flatline detected on lead(s): {', '.join(flat_leads)}.")
+
+    # Check extreme amplitude clipping (> 5.0 mV or < -5.0 mV)
+    max_amp = float(np.max(np.abs(sig)))
+    if max_amp > 5.0:
+        warnings.append(f"High peak amplitude detected ({max_amp:.2f} mV). Possible electrode saturation or pacing spike.")
+    elif max_amp < 0.05:
+        warnings.append(f"Very low peak amplitude ({max_amp:.3f} mV). Verify input gain calibration.")
+
+    # Check baseline drift (offset > 1.0 mV from zero)
+    lead_means = np.mean(sig, axis=0)
+    drift_leads = [LEADS[i] for i, m in enumerate(lead_means) if abs(m) > 1.0]
+    if drift_leads:
+        warnings.append(f"Severe baseline wander detected on lead(s): {', '.join(drift_leads)}.")
+
+    quality_score = max(0.0, 1.0 - (0.25 * len(warnings)))
+    if len(warnings) == 0:
+        status = "optimal"
+    elif quality_score >= 0.5:
+        status = "acceptable_with_warnings"
+    else:
+        status = "poor"
+
+    return {
+        "status": status,
+        "quality_score": round(quality_score, 2),
+        "warnings": warnings
+    }
 
 
 # Architecture metadata catalog
@@ -327,6 +449,19 @@ class LeadAblationRequest(BaseModel):
 
 class SelectModelRequest(BaseModel):
     model: str
+
+
+class CompareRequest(BaseModel):
+    signal: List[List[float]] = Field(..., description="ECG signal array, shape (1000, 12)")
+    models: Optional[List[str]] = Field(None, description="List of model keys to evaluate")
+
+
+class RobustnessRequest(BaseModel):
+    signal: List[List[float]] = Field(..., description="ECG signal array, shape (1000, 12)")
+    model: Optional[str] = Field("seq", description="Target model key")
+    experiment_type: str = Field("gaussian_noise", description="Perturbation type (gaussian_noise, baseline_drift, lead_dropout, temporal_burst)")
+    intensity: Optional[float] = Field(0.05, description="Perturbation amplitude")
+    lead_idx: Optional[int] = Field(0, description="Lead index for lead dropout (0-11)")
 
 
 # ==========================================
@@ -607,6 +742,7 @@ async def validate_ecg_upload(request: Request):
             if np.isnan(arr).any() or np.isinf(arr).any():
                 raise ValueError("Signal contains NaN or Inf values.")
 
+            quality = analyze_signal_quality(arr)
             meta = {
                 "format": "json",
                 "filename": body.get("filename", "raw_signal.json"),
@@ -622,7 +758,11 @@ async def validate_ecg_upload(request: Request):
                 "max_val": float(arr.max()),
                 "mean_val": float(arr.mean()),
                 "std_val": float(arr.std()),
-                "validation_status": "valid"
+                "validation_status": "valid",
+                "quality": quality,
+                "quality_status": quality["status"],
+                "quality_score": quality["quality_score"],
+                "quality_warnings": quality["warnings"]
             }
             return {
                 "valid": True,
@@ -657,8 +797,13 @@ async def validate_ecg_upload(request: Request):
             else:
                 raise ValueError(f"Unsupported file format '{ext}'. Supported formats: .csv, .npy, .npz, .hea/.dat")
 
+            quality = analyze_signal_quality(arr)
             meta["filename"] = filename
             meta["validation_status"] = "valid"
+            meta["quality"] = quality
+            meta["quality_status"] = quality["status"]
+            meta["quality_score"] = quality["quality_score"]
+            meta["quality_warnings"] = quality["warnings"]
             return {
                 "valid": True,
                 "metadata": meta,
@@ -670,6 +815,7 @@ async def validate_ecg_upload(request: Request):
                 body = await request.json()
                 if "signal" in body:
                     arr = ensure_1000x12(np.array(body["signal"], dtype=np.float32))
+                    quality = analyze_signal_quality(arr)
                     meta = {
                         "format": "json",
                         "filename": "raw_signal.json",
@@ -685,7 +831,11 @@ async def validate_ecg_upload(request: Request):
                         "max_val": float(arr.max()),
                         "mean_val": float(arr.mean()),
                         "std_val": float(arr.std()),
-                        "validation_status": "valid"
+                        "validation_status": "valid",
+                        "quality": quality,
+                        "quality_status": quality["status"],
+                        "quality_score": quality["quality_score"],
+                        "quality_warnings": quality["warnings"]
                     }
                     return {"valid": True, "metadata": meta, "signal": arr.tolist()}
             except Exception:
@@ -824,7 +974,22 @@ def analyze_ecg(req: AnalyzeRequest):
         print(f"Attribution notice: {e}")
         time_regions = None
 
+    analysis_id = f"ANL-{int(time.time())}-{uuid.uuid4().hex[:6]}"
+    save_analysis_record(
+        analysis_id,
+        "ecg_analysis.csv",
+        model_name,
+        sig,
+        {"n_samples": 1000, "n_leads": 12, "units": "mV"},
+        predictions,
+        probs_dict,
+        thresholds,
+        latency_ms,
+        target_class
+    )
+
     return {
+        "analysis_id": analysis_id,
         "model": model_name,
         "model_display_name": meta.get("display_name", model_name),
         "latency_ms": latency_ms,
@@ -1009,6 +1174,389 @@ def explain_faithfulness(req: FaithfulnessRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Faithfulness perturbation test failed: {str(e)}")
+
+
+# ==========================================
+# Artifacts Catalog & Model Verification
+# ==========================================
+
+@app.get("/api/artifacts")
+def list_artifacts():
+    """
+    Returns verified catalog of trained checkpoints, normalization statistics,
+    and evaluation report files in the project cache.
+    """
+    items = []
+    if os.path.exists(CACHE_DIR):
+        for f in os.listdir(CACHE_DIR):
+            p = os.path.join(CACHE_DIR, f)
+            if os.path.isfile(p):
+                sz = os.path.getsize(p)
+                mod = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(os.path.getmtime(p)))
+                ext = os.path.splitext(f)[1].lower()
+                is_ckpt = ext == ".pt"
+                is_valid = True
+                param_cnt = None
+                if is_ckpt:
+                    try:
+                        sd = torch.load(p, map_location="cpu", weights_only=True)
+                        param_cnt = sum(v.numel() for v in sd.values())
+                    except Exception:
+                        is_valid = False
+
+                items.append({
+                    "filename": f,
+                    "size_bytes": sz,
+                    "size_mb": round(sz / (1024 * 1024), 2),
+                    "modified": mod,
+                    "type": "checkpoint" if is_ckpt else ("dataset_cache" if ext == ".npy" else "artifact"),
+                    "verified": is_valid,
+                    "param_count": param_cnt
+                })
+    return {"artifacts": sorted(items, key=lambda x: x["filename"])}
+
+
+# ==========================================
+# Multi-Model Prediction Comparison & Agreement
+# ==========================================
+
+@app.post("/api/ecg/compare")
+def compare_models(req: CompareRequest):
+    """
+    Evaluates the uploaded ECG across multiple models simultaneously,
+    comparing predictions, per-class score shifts, and model agreement.
+    """
+    target_models = req.models or ["seq", "cnn", "hybrid", "gated"]
+    try:
+        sig = ensure_1000x12(np.array(req.signal, dtype=np.float32))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid signal shape: {str(e)}")
+
+    ns = load_norm_stats()
+    x_norm = ((sig - ns["mu"]) / ns["sd"]).T[None].astype(np.float32)
+    x_tensor = torch.from_numpy(x_norm)
+
+    results = {}
+    for m in target_models:
+        if m not in MODEL_METADATA or not MODEL_METADATA[m].get("checkpoint"):
+            continue
+        try:
+            net = get_model(m)
+            f_tensor = None
+            meta = MODEL_METADATA.get(m, {})
+            if meta.get("arch_mode") in ("hybrid", "gated", "feat"):
+                feat = extract_handcrafted_features(sig)
+                f_norm = ((feat - ns["fm"]) / ns["fs"])[None].astype(np.float32)
+                f_tensor = torch.from_numpy(f_norm)
+
+            t0 = time.perf_counter()
+            with torch.no_grad():
+                logits = net(x_tensor, f_tensor)
+                probs = torch.sigmoid(logits)[0].numpy()
+            lat = round((time.perf_counter() - t0) * 1000.0, 2)
+
+            t_map = get_thresholds_for_model(m)
+            preds = []
+            for i, c in enumerate(CLASSES):
+                p_val = float(probs[i])
+                th = t_map.get(c, 0.5)
+                preds.append({
+                    "class": c,
+                    "probability": p_val,
+                    "threshold": th,
+                    "detected": bool(p_val >= th)
+                })
+            results[m] = {
+                "display_name": meta.get("display_name", m),
+                "latency_ms": lat,
+                "probabilities": {c: float(probs[i]) for i, c in enumerate(CLASSES)},
+                "predictions": preds
+            }
+        except Exception as err:
+            results[m] = {"error": str(err)}
+
+    # Compute multi-model agreement
+    agreement = {}
+    for c in CLASSES:
+        detected_list = [
+            results[m]["probabilities"][c] >= results[m]["predictions"][CLASSES.index(c)]["threshold"]
+            for m in results if "probabilities" in results[m]
+        ]
+        if detected_list:
+            pos_ratio = sum(detected_list) / len(detected_list)
+            is_unanimous = (pos_ratio == 1.0 or pos_ratio == 0.0)
+            agreement[c] = {
+                "positive_count": sum(detected_list),
+                "total_models": len(detected_list),
+                "agreement_ratio": round(max(pos_ratio, 1.0 - pos_ratio), 2),
+                "unanimous": is_unanimous,
+                "consensus_detected": bool(pos_ratio >= 0.5)
+            }
+
+    return {
+        "models": results,
+        "agreement": agreement,
+        "classes": CLASSES
+    }
+
+
+# ==========================================
+# Controlled Robustness Experiments
+# ==========================================
+
+@app.post("/api/robustness")
+def test_robustness(req: RobustnessRequest):
+    """
+    Applies controlled, documented signal perturbations and measures output sensitivity.
+    Supports: 'gaussian_noise', 'baseline_drift', 'lead_dropout', 'temporal_burst'.
+    """
+    model_name = req.model or _ACTIVE_MODEL
+    net = get_model(model_name)
+    ns = load_norm_stats()
+    try:
+        sig = ensure_1000x12(np.array(req.signal, dtype=np.float32))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid signal: {str(e)}")
+
+    # Baseline prediction on original
+    x_orig = ((sig - ns["mu"]) / ns["sd"]).T[None].astype(np.float32)
+    x_t_orig = torch.from_numpy(x_orig)
+    f_t_orig = None
+    meta = MODEL_METADATA.get(model_name, {})
+    if meta.get("arch_mode") in ("hybrid", "gated", "feat"):
+        feat = extract_handcrafted_features(sig)
+        f_norm = ((feat - ns["fm"]) / ns["fs"])[None].astype(np.float32)
+        f_t_orig = torch.from_numpy(f_norm)
+
+    with torch.no_grad():
+        p_orig = torch.sigmoid(net(x_t_orig, f_t_orig))[0].numpy()
+
+    # Apply perturbation
+    perturbed_sig = sig.copy()
+    intensity = req.intensity if req.intensity is not None else 0.05
+    np.random.seed(42)  # Deterministic seed for scientific repeatability
+
+    if req.experiment_type == "gaussian_noise":
+        noise = np.random.normal(0, intensity, perturbed_sig.shape).astype(np.float32)
+        perturbed_sig += noise
+        desc = f"Additive Gaussian white noise (std = {intensity:.3f} mV)"
+    elif req.experiment_type == "baseline_drift":
+        t = np.linspace(0, 10.0, 1000)[:, None]
+        drift = (intensity * np.sin(2 * np.pi * 0.15 * t)).astype(np.float32)
+        perturbed_sig += drift
+        desc = f"Low-frequency baseline drift (f = 0.15 Hz, amplitude = {intensity:.3f} mV)"
+    elif req.experiment_type == "lead_dropout":
+        l_idx = req.lead_idx if req.lead_idx is not None and 0 <= req.lead_idx < 12 else 0
+        perturbed_sig[:, l_idx] = 0.0
+        desc = f"Zeroed lead {LEADS[l_idx]} (detached electrode / lead dropout)"
+    elif req.experiment_type == "temporal_burst":
+        start_idx = 400
+        end_idx = 450
+        burst = np.random.normal(0, intensity * 2.0, (end_idx - start_idx, 12)).astype(np.float32)
+        perturbed_sig[start_idx:end_idx] += burst
+        desc = f"Transient artifact burst at t=4.0s-4.5s (intensity = {intensity * 2.0:.3f} mV)"
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown experiment type '{req.experiment_type}'")
+
+    # Re-evaluate on perturbed signal
+    x_pert = ((perturbed_sig - ns["mu"]) / ns["sd"]).T[None].astype(np.float32)
+    x_t_pert = torch.from_numpy(x_pert)
+    f_t_pert = None
+    if meta.get("arch_mode") in ("hybrid", "gated", "feat"):
+        feat_p = extract_handcrafted_features(perturbed_sig)
+        f_norm_p = ((feat_p - ns["fm"]) / ns["fs"])[None].astype(np.float32)
+        f_t_pert = torch.from_numpy(f_norm_p)
+
+    with torch.no_grad():
+        p_pert = torch.sigmoid(net(x_t_pert, f_t_pert))[0].numpy()
+
+    diffs = {}
+    for i, c in enumerate(CLASSES):
+        o_v = float(p_orig[i])
+        p_v = float(p_pert[i])
+        diffs[c] = {
+            "original": round(o_v, 4),
+            "perturbed": round(p_v, 4),
+            "delta": round(p_v - o_v, 4),
+            "percent_change": round(((p_v - o_v) / (o_v + 1e-6)) * 100.0, 2)
+        }
+
+    return {
+        "model": model_name,
+        "experiment_type": req.experiment_type,
+        "description": desc,
+        "shifts": diffs,
+        "mean_abs_delta": round(float(np.mean(np.abs(p_pert - p_orig))), 4),
+        "stability_score": round(max(0.0, 1.0 - float(np.mean(np.abs(p_pert - p_orig)))), 4),
+        "perturbed_signal_preview": perturbed_sig[:100].tolist()
+    }
+
+
+# ==========================================
+# Experiment History & Analysis Persistence
+# ==========================================
+
+@app.get("/api/analyses")
+def list_analyses(limit: int = 30):
+    """
+    Returns list of saved analyses from the local database.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT id, timestamp, created_at, filename, model_name, predictions_json,
+               probabilities_json, latency_ms, explain_class
+        FROM analyses ORDER BY timestamp DESC LIMIT ?
+        """, (limit,))
+        rows = cur.fetchall()
+        conn.close()
+
+        items = []
+        for r in rows:
+            items.append({
+                "id": r[0],
+                "timestamp": r[1],
+                "created_at": r[2],
+                "filename": r[3],
+                "model_name": r[4],
+                "predictions": json.loads(r[5]) if r[5] else [],
+                "probabilities": json.loads(r[6]) if r[6] else {},
+                "latency_ms": r[7],
+                "explain_class": r[8]
+            })
+        return {"total": len(items), "analyses": items}
+    except Exception as e:
+        return {"total": 0, "analyses": [], "error": str(e)}
+
+
+@app.get("/api/analyses/{analysis_id}")
+def get_analysis_detail(analysis_id: str):
+    """
+    Retrieves full saved analysis including signal data for one-click reopening.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("""
+        SELECT id, timestamp, created_at, filename, model_name, signal_data,
+               metadata_json, predictions_json, probabilities_json, thresholds_json,
+               latency_ms, explain_class, notes
+        FROM analyses WHERE id = ?
+        """, (analysis_id,))
+        row = cur.fetchone()
+        conn.close()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Analysis '{analysis_id}' not found.")
+        return {
+            "id": row[0],
+            "timestamp": row[1],
+            "created_at": row[2],
+            "filename": row[3],
+            "model_name": row[4],
+            "signal": json.loads(row[5]) if row[5] else None,
+            "metadata": json.loads(row[6]) if row[6] else {},
+            "predictions": json.loads(row[7]) if row[7] else [],
+            "probabilities": json.loads(row[8]) if row[8] else {},
+            "thresholds": json.loads(row[9]) if row[9] else {},
+            "latency_ms": row[10],
+            "explain_class": row[11],
+            "notes": row[12]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/analyses/{analysis_id}")
+def delete_analysis(analysis_id: str):
+    """
+    Permanently deletes a saved analysis record from local persistence.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("DELETE FROM analyses WHERE id = ?", (analysis_id,))
+        conn.commit()
+        deleted = cur.rowcount
+        conn.close()
+        if deleted == 0:
+            raise HTTPException(status_code=404, detail="Analysis record not found.")
+        return {"status": "success", "message": f"Deleted analysis '{analysis_id}'."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analyses/{analysis_id}/report")
+def export_analysis_report(analysis_id: str):
+    """
+    Generates a structured research report bundle formatted for printable display and PDF generation.
+    """
+    data = get_analysis_detail(analysis_id)
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>ECG Intelligence Research Report — {data['id']}</title>
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 40px; color: #252525; background: #FFF; }}
+        .header {{ border-bottom: 2px solid #A83245; padding-bottom: 12px; margin-bottom: 24px; }}
+        h1 {{ color: #252525; font-size: 22px; margin: 0 0 4px 0; }}
+        .meta-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; background: #F7F7F5; padding: 14px; border-radius: 6px; font-size: 13px; }}
+        .meta-item b {{ display: block; color: #777773; font-size: 11px; text-transform: uppercase; margin-bottom: 2px; }}
+        table {{ width: 100%; border-collapse: collapse; margin-bottom: 24px; font-size: 13px; }}
+        th, td {{ padding: 10px 12px; text-align: left; border-bottom: 1px solid #E8E6E1; }}
+        th {{ background: #FAFAF8; color: #777773; font-weight: 600; }}
+        .badge-detected {{ background: #FDEEEE; color: #B33A3A; padding: 3px 8px; border-radius: 4px; font-weight: 600; font-size: 11px; }}
+        .badge-negative {{ background: #E8F4EE; color: #34765A; padding: 3px 8px; border-radius: 4px; font-weight: 600; font-size: 11px; }}
+        .disclaimer {{ background: #FDF4E7; border-left: 4px solid #B77925; padding: 12px 16px; font-size: 12px; color: #634212; margin-top: 30px; }}
+        @media print {{ body {{ margin: 0; }} }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>PTB-XL ECG Intelligence — Clinical Research Analysis Report</h1>
+        <div style="font-size: 12px; color: #777773;">Analysis ID: {data['id']} | Timestamp: {data['created_at']} UTC</div>
+    </div>
+    
+    <div class="meta-grid">
+        <div class="meta-item"><b>Record Identifier</b>{data['filename']}</div>
+        <div class="meta-item"><b>Inference Model</b>{data['model_name']}</div>
+        <div class="meta-item"><b>Inference Latency</b>{data['latency_ms']} ms</div>
+        <div class="meta-item"><b>Sampling / Leads</b>100 Hz / 12 Standard Leads</div>
+    </div>
+
+    <h3>Multilabel Diagnostic Classification</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Diagnostic Superclass</th>
+                <th>Abbreviation</th>
+                <th>Predicted Score</th>
+                <th>Validation Threshold</th>
+                <th>Decision Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {"".join(f'''<tr>
+                <td><b>{CLASS_NAMES.get(p["class"], p["class"])}</b></td>
+                <td>{p["class"]}</td>
+                <td>{p["probability"]:.4f}</td>
+                <td>{p["threshold"]:.4f}</td>
+                <td><span class="{'badge-detected' if p['detected'] else 'badge-negative'}">{'DETECTED' if p['detected'] else 'NEGATIVE'}</span></td>
+            </tr>''' for p in data["predictions"])}
+        </tbody>
+    </table>
+
+    <div class="disclaimer">
+        <b>RESEARCH USE ONLY:</b> This report was generated by an experimental research system. Model predictions, thresholds, and attributions are non-diagnostic and must not be used as clinical diagnostic criteria. Medical decisions require comprehensive clinical assessment by certified healthcare professionals.
+    </div>
+</body>
+</html>"""
+    return HTMLResponse(content=html_content)
 
 
 # ==========================================

@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   CheckCircle2,
   Cpu,
@@ -11,10 +11,12 @@ import {
   AlertCircle,
   HelpCircle,
   Check,
-  FileCheck
+  FileCheck,
+  Database,
+  HardDrive
 } from 'lucide-react'
-import { ModelMetadata, DiagnosticClass } from '../types'
-import { selectActiveModel } from '../api'
+import { ModelMetadata, DiagnosticClass, ArtifactItem } from '../types'
+import { selectActiveModel, fetchArtifacts } from '../api'
 import { DisclaimerBanner } from './DisclaimerBanner'
 
 interface ModelLabViewProps {
@@ -36,6 +38,14 @@ export const ModelLabView: React.FC<ModelLabViewProps> = ({
   const [selectedModelId, setSelectedModelId] = useState<string>(activeModel || 'seq')
   const [isSwitching, setIsSwitching] = useState<boolean>(false)
   const [switchFeedback, setSwitchFeedback] = useState<string | null>(null)
+  const [artifacts, setArtifacts] = useState<ArtifactItem[]>([])
+  const [showArtifacts, setShowArtifacts] = useState<boolean>(true)
+
+  useEffect(() => {
+    fetchArtifacts()
+      .then((data) => setArtifacts(data.artifacts || []))
+      .catch(() => {})
+  }, [])
 
   // Filtered and sorted models list
   const filteredModels = models.filter((m) => {
@@ -321,6 +331,77 @@ export const ModelLabView: React.FC<ModelLabViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Artifact Files Browser */}
+      <div className="card">
+        <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h3 className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <HardDrive size={18} color="var(--accent-burgundy)" />
+              Trained Checkpoints &amp; Cache Artifact Browser
+            </h3>
+            <p className="card-subtitle">
+              Inspecting {artifacts.length} verified experiment files, PyTorch state dicts, normalization statistics, and evaluation JSONs in <code>artifacts/cache/</code>.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowArtifacts(!showArtifacts)}
+            className="btn btn-sm"
+            style={{ fontSize: '0.78rem' }}
+          >
+            {showArtifacts ? 'Collapse' : 'Expand'}
+          </button>
+        </div>
+
+        {showArtifacts && (
+          <div style={{ overflowX: 'auto', maxHeight: '380px', overflowY: 'auto', marginTop: '10px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '2px solid var(--border-light)', textAlign: 'left', color: 'var(--text-secondary)' }}>
+                  <th style={{ padding: '8px 10px' }}>File Name</th>
+                  <th style={{ padding: '8px 10px' }}>Type</th>
+                  <th style={{ padding: '8px 10px' }}>Size (MB)</th>
+                  <th style={{ padding: '8px 10px' }}>Parameters</th>
+                  <th style={{ padding: '8px 10px' }}>Verification</th>
+                  <th style={{ padding: '8px 10px' }}>Modified (UTC)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {artifacts.map((art) => (
+                  <tr key={art.filename} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                    <td style={{ padding: '8px 10px', fontWeight: 600, color: art.type === 'checkpoint' ? 'var(--accent-burgundy)' : 'var(--text-primary)' }}>
+                      {art.filename}
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <span className={`badge ${art.type === 'checkpoint' ? 'badge-accent' : 'badge-neutral'}`} style={{ fontSize: '0.7rem' }}>
+                        {art.type}
+                      </span>
+                    </td>
+                    <td style={{ padding: '8px 10px', color: 'var(--text-secondary)' }}>
+                      {art.size_mb.toFixed(2)} MB
+                    </td>
+                    <td style={{ padding: '8px 10px', color: 'var(--text-secondary)' }}>
+                      {art.param_count ? art.param_count.toLocaleString() : '—'}
+                    </td>
+                    <td style={{ padding: '8px 10px' }}>
+                      {art.verified ? (
+                        <span style={{ color: 'var(--color-success)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <Check size={12} /> Validated
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--color-warning)', fontWeight: 600 }}>Unverified</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '8px 10px', color: 'var(--text-muted)' }}>
+                      {art.modified}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {/* Research Methodology Notes */}
       <div className="card" style={{ background: '#FAF9F6' }}>
