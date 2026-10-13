@@ -19,6 +19,8 @@ import {
   ClassTimeMatrixResponse,
   LeadAblationMatrixResponse,
   NavigationTab,
+  ResearchSubTab,
+  ECGStudy,
 } from '../types'
 import {
   fetchHealth,
@@ -26,6 +28,7 @@ import {
   fetchMetrics,
   fetchSamples,
   fetchSampleDetail,
+  fetchStudyDetail,
   analyzeECG,
   fetchExplanation,
   runFaithfulnessTest,
@@ -44,6 +47,17 @@ interface AnalysisContextType {
   // Navigation
   currentTab: NavigationTab
   setCurrentTab: (tab: NavigationTab) => void
+  researchSubTab: ResearchSubTab
+  setResearchSubTab: (sub: ResearchSubTab) => void
+
+  // Clinical Patient & Study Selection
+  selectedPatientId: string | null
+  setSelectedPatientId: (id: string | null) => void
+  selectedStudyId: string | null
+  setSelectedStudyId: (id: string | null) => void
+  selectedStudy: ECGStudy | null
+  setSelectedStudy: (study: ECGStudy | null) => void
+  openStudyForReview: (studyId: string, patientId?: string) => Promise<void>
 
   // Health and Models
   health: BackendHealth | null
@@ -99,7 +113,11 @@ interface AnalysisContextType {
 const AnalysisContext = createContext<AnalysisContextType | undefined>(undefined)
 
 export const AnalysisProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [currentTab, setCurrentTab] = useState<NavigationTab>('overview')
+  const [currentTab, setCurrentTab] = useState<NavigationTab>('clinical_overview')
+  const [researchSubTab, setResearchSubTab] = useState<ResearchSubTab>('explainability')
+  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null)
+  const [selectedStudyId, setSelectedStudyId] = useState<string | null>(null)
+  const [selectedStudy, setSelectedStudy] = useState<ECGStudy | null>(null)
   const [activeModel, setActiveModel] = useState<string>('seq')
   const [health, setHealth] = useState<BackendHealth | null>(null)
   const [models, setModels] = useState<ModelMetadata[]>([])
@@ -487,11 +505,41 @@ export const AnalysisProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   }
 
+  const openStudyForReview = async (studyId: string, patientId?: string) => {
+    try {
+      setSelectedStudyId(studyId)
+      if (patientId) setSelectedPatientId(patientId)
+      const detail = await fetchStudyDetail(studyId)
+      setSelectedStudy(detail)
+      if (detail.patient_id) setSelectedPatientId(detail.patient_id)
+      if (detail.signal) {
+        setCurrentSignal(detail.signal)
+        setCurrentMetadata(detail.metadata || null)
+      }
+      if (detail.selected_model) {
+        setActiveModel(detail.selected_model)
+      }
+      setCurrentTab('ecg_review')
+    } catch (e) {
+      console.error('Failed to open study for review:', e)
+      setCurrentTab('ecg_review')
+    }
+  }
+
   return (
     <AnalysisContext.Provider
       value={{
         currentTab,
         setCurrentTab,
+        researchSubTab,
+        setResearchSubTab,
+        selectedPatientId,
+        setSelectedPatientId,
+        selectedStudyId,
+        setSelectedStudyId,
+        selectedStudy,
+        setSelectedStudy,
+        openStudyForReview,
         health,
         models,
         activeModel,

@@ -10,6 +10,12 @@ import {
   FaithfulnessResponse,
   LeadAblationResponse,
   DiagnosticClass,
+  Patient,
+  ECGStudy,
+  ClinicalNote,
+  ClinicalReport,
+  ClinicalOverviewData,
+  LongitudinalComparisonResult,
 } from './types'
 
 const BASE_URL = '' // Relative for same-origin or Vite proxy
@@ -324,5 +330,191 @@ export async function deleteAnalysis(id: string): Promise<void> {
 
 export function getAnalysisReportUrl(id: string): string {
   return `${BASE_URL}/api/analyses/${id}/report`
+}
+
+// ==============================================================================
+// CLINICAL REVIEW & DOCUMENTATION API CLIENT
+// ==============================================================================
+
+export async function fetchClinicalOverview(): Promise<ClinicalOverviewData> {
+  const res = await fetch(`${BASE_URL}/api/clinical/overview`)
+  if (!res.ok) throw new Error(`Failed to load clinical overview: ${res.statusText}`)
+  return res.json()
+}
+
+export async function fetchPatients(
+  query?: string,
+  status?: string,
+  sortBy: string = 'updated_at',
+  order: string = 'desc'
+): Promise<{ total: number; patients: Patient[] }> {
+  const params = new URLSearchParams()
+  if (query) params.append('q', query)
+  if (status && status !== 'all') params.append('status', status)
+  params.append('sort_by', sortBy)
+  params.append('order', order)
+  const res = await fetch(`${BASE_URL}/api/patients?${params.toString()}`)
+  if (!res.ok) throw new Error(`Failed to fetch patients: ${res.statusText}`)
+  return res.json()
+}
+
+export async function fetchPatientDetail(id: string): Promise<Patient> {
+  const res = await fetch(`${BASE_URL}/api/patients/${id}`)
+  if (!res.ok) throw new Error(`Failed to load patient ${id}: ${res.statusText}`)
+  return res.json()
+}
+
+export async function createPatient(data: Partial<Patient>): Promise<Patient> {
+  const res = await fetch(`${BASE_URL}/api/patients`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Failed to create patient')
+  }
+  return res.json()
+}
+
+export async function updatePatient(id: string, updates: Partial<Patient>): Promise<Patient> {
+  const res = await fetch(`${BASE_URL}/api/patients/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Failed to update patient')
+  }
+  return res.json()
+}
+
+export async function deletePatient(id: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/patients/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`Failed to delete patient: ${res.statusText}`)
+}
+
+export async function fetchStudies(
+  status?: string,
+  patientId?: string,
+  query?: string
+): Promise<{ total: number; studies: ECGStudy[] }> {
+  const params = new URLSearchParams()
+  if (status && status !== 'all') params.append('status', status)
+  if (patientId) params.append('patient_id', patientId)
+  if (query) params.append('q', query)
+  const res = await fetch(`${BASE_URL}/api/studies?${params.toString()}`)
+  if (!res.ok) throw new Error(`Failed to load ECG worklist: ${res.statusText}`)
+  return res.json()
+}
+
+export async function fetchStudyDetail(id: string): Promise<ECGStudy> {
+  const res = await fetch(`${BASE_URL}/api/studies/${id}`)
+  if (!res.ok) throw new Error(`Failed to load ECG study: ${res.statusText}`)
+  return res.json()
+}
+
+export async function createStudy(data: {
+  patient_id: string
+  sample_index?: number
+  signal?: number[][]
+  filename?: string
+  assigned_clinician?: string
+  metadata?: any
+}): Promise<ECGStudy> {
+  const res = await fetch(`${BASE_URL}/api/studies`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Failed to create study')
+  }
+  return res.json()
+}
+
+export async function updateStudyStatus(id: string, status: string, assignedClinician?: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/studies/${id}/status`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status, assigned_clinician: assignedClinician }),
+  })
+  if (!res.ok) throw new Error(`Failed to update study status: ${res.statusText}`)
+}
+
+export async function deleteStudy(id: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/studies/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`Failed to delete ECG study: ${res.statusText}`)
+}
+
+export async function analyzeStudy(studyId: string, model?: string): Promise<any> {
+  const url = model ? `${BASE_URL}/api/studies/${studyId}/analyze?model=${model}` : `${BASE_URL}/api/studies/${studyId}/analyze`
+  const res = await fetch(url, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Failed to run model inference on study')
+  }
+  return res.json()
+}
+
+export async function fetchStudyNotes(studyId: string): Promise<ClinicalNote> {
+  const res = await fetch(`${BASE_URL}/api/studies/${studyId}/notes`)
+  if (!res.ok) throw new Error(`Failed to fetch notes: ${res.statusText}`)
+  return res.json()
+}
+
+export async function saveStudyNotes(studyId: string, notes: Partial<ClinicalNote>): Promise<ClinicalNote> {
+  const res = await fetch(`${BASE_URL}/api/studies/${studyId}/notes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(notes),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Failed to save clinical notes')
+  }
+  return res.json()
+}
+
+export async function draftAiNotes(studyId: string): Promise<Partial<ClinicalNote>> {
+  const res = await fetch(`${BASE_URL}/api/studies/${studyId}/notes/draft_ai`, { method: 'POST' })
+  if (!res.ok) throw new Error(`Failed to generate AI draft: ${res.statusText}`)
+  return res.json()
+}
+
+export async function fetchStudyReportHtml(studyId: string): Promise<string> {
+  const res = await fetch(`${BASE_URL}/api/studies/${studyId}/report?format=html`)
+  if (!res.ok) throw new Error(`Failed to load report preview: ${res.statusText}`)
+  return res.text()
+}
+
+export async function fetchStudyReportJson(studyId: string): Promise<any> {
+  const res = await fetch(`${BASE_URL}/api/studies/${studyId}/report?format=json`)
+  if (!res.ok) throw new Error(`Failed to load report data: ${res.statusText}`)
+  return res.json()
+}
+
+export async function finalizeStudyReport(studyId: string, signedBy: string): Promise<any> {
+  const res = await fetch(`${BASE_URL}/api/studies/${studyId}/report/finalize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ signed_by: signedBy }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Failed to finalize report')
+  }
+  return res.json()
+}
+
+export async function fetchLongitudinalComparison(studyA: string, studyB: string): Promise<LongitudinalComparisonResult> {
+  const res = await fetch(`${BASE_URL}/api/compare/longitudinal?study_a=${studyA}&study_b=${studyB}`)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Longitudinal comparison failed')
+  }
+  return res.json()
 }
 

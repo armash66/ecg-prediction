@@ -35,4 +35,15 @@
 | **F-31** | Dedicated Research Analytics & Leaderboard | **Implemented and tested** | Benchmark leaderboard, class-wise metric heatmap, validation threshold simulator, split protocol. |
 | **F-32** | Dedicated Analysis History & Comparison | **Implemented and tested** | SQLite search, model filtering, direct analysis restoration, and report generation. |
 | **F-33** | Dedicated Research Reports & Data Export Center | **Implemented and tested** | Live report iframe preview, printable HTML/PDF export, JSON session metadata, predictions CSV, curves CSV. |
-| **F-34** | Shared Analysis State Context | **Implemented and tested** | `AnalysisContext` persists uploaded signal, active model, predictions, and XAI across all 10 pages without state loss. |
+| **F-34** | Shared Analysis State Context | **Implemented and tested** | `AnalysisContext` persists uploaded signal, active model, predictions, and XAI across all pages without state loss. |
+| **C-01** | Clinical Database Persistence (SQLite) | **Implemented and tested** | Relational schema (`patients`, `encounters`, `ecg_studies`, `clinical_notes`, `clinical_reports`) with foreign keys, indexing, and cascade deletion. |
+| **C-02** | Patient Chart Management & Demographics | **Implemented and tested** | Patient CRUD endpoints, MRN tracking, clinical history, active medications, and longitudinal record view. |
+| **C-03** | ECG Study Worklist & Triage Queue | **Implemented and tested** | Worklist with status filters (`pending`, `analyzed`, `reviewed`, `reported`), urgency badges (`stat`, `urgent`, `routine`), and direct chart linking. |
+| **C-04** | Clinician-Oriented ECG Review Workspace | **Implemented and tested** | Diagnostic 12-lead viewer with lead zoom, signal quality metrics, 5-class AI prediction panel, and interactive class focus. |
+| **C-05** | Structured Clinical Notes & Deterministic AI Draft | **Implemented and tested** | SOAP notes format + deterministic rule-based AI draft generator with prominent verification watermark (`[AI DRAFT — REQUIRES CLINICIAN VERIFICATION & SIGN-OFF]`). |
+| **C-06** | Clinical Report Preview & Sign-Off | **Implemented and tested** | Official diagnostic report generation with versioning (`REP-{code}-v{n}`), printable PDF layout, and electronic sign-off workflow. |
+| **C-07** | Longitudinal ECG Comparison | **Implemented and tested** | Comparative trajectory tracking across sequential patient ECG studies, measuring probability shifts ($\Delta P$) over time. |
+| **C-08** | Clinical Department Overview & Metrics | **Implemented and tested** | Department KPIs (total patients, active studies, pending reviews, urgent cases) and real-time recent activity stream. |
+| **C-09** | Integrated Research Lab Secondary Suite | **Implemented and tested** | Preserves all 7 research studios (Model Lab, Explainability, Model Comparison, Signal Explorer, Faithfulness, Robustness, Analytics) within nested navigation. |
+| **C-10** | Clinical Human Interface & Disclaimers | **Implemented and tested** | Warm medical aesthetic (`#F7F7F5` / `#A83245`), decision-support badges, patient header pill, and responsive clinical workflow layout. |
+

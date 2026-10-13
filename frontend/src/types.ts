@@ -225,7 +225,25 @@ export interface AnalysisResponse {
   disclaimer: string
 }
 
+export type ResearchSubTab =
+  | 'modellab'
+  | 'explainability'
+  | 'model_comparison'
+  | 'signal_explorer'
+  | 'faithfulness'
+  | 'robustness'
+  | 'research_analytics'
+
 export type NavigationTab =
+  | 'clinical_overview'
+  | 'worklist'
+  | 'patients'
+  | 'ecg_review'
+  | 'encounters'
+  | 'reports'
+  | 'research_lab'
+  | 'settings'
+  // Compatibility with existing sub-routes
   | 'overview'
   | 'analysis'
   | 'signal_explorer'
@@ -235,8 +253,180 @@ export type NavigationTab =
   | 'robustness'
   | 'research_analytics'
   | 'history'
-  | 'reports'
   | 'modellab'
+
+export interface Patient {
+  id: string
+  patient_id: string
+  mrn: string
+  name: string
+  dob: string
+  age: number | null
+  sex: string
+  contact: string
+  clinical_history: string
+  allergies: string
+  medications: string
+  notes: string
+  status: string
+  created_at: string
+  updated_at: string
+  study_count?: number
+  encounter_count?: number
+  latest_study_date?: string
+  encounters?: Encounter[]
+  studies?: ECGStudy[]
+  clinical_notes?: ClinicalNote[]
+  reports?: ClinicalReport[]
+}
+
+export interface Encounter {
+  id: string
+  encounter_id: string
+  patient_id: string
+  encounter_date: string
+  encounter_type: string
+  department: string
+  attending_clinician: string
+  reason_for_visit: string
+  status: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ECGStudy {
+  id: string
+  study_id: string
+  patient_id: string
+  patient_display_id?: string
+  patient_name?: string
+  patient_age?: number | null
+  patient_sex?: string
+  patient_mrn?: string
+  patient_dob?: string
+  patient_history?: string
+  patient_allergies?: string
+  patient_medications?: string
+  encounter_id: string | null
+  encounter_display_id?: string
+  encounter_type?: string
+  department?: string
+  reason_for_visit?: string
+  recorded_at: string
+  uploaded_at: string
+  filename: string
+  signal?: number[][] | null
+  metadata?: SignalMetadata
+  quality_status: 'optimal' | 'acceptable_with_warnings' | 'poor' | 'rejected'
+  quality_score: number
+  quality_warnings: string[]
+  status: 'new' | 'awaiting_review' | 'in_progress' | 'reviewed' | 'finalized'
+  assigned_clinician: string
+  selected_model: string
+  latest_analysis_id?: string
+  probabilities: Record<DiagnosticClass, number>
+  thresholds: Record<DiagnosticClass, number>
+  flags: DiagnosticClass[]
+  created_at: string
+  updated_at: string
+  clinical_notes?: ClinicalNote | null
+  clinical_report?: ClinicalReport | null
+}
+
+export interface ClinicalNote {
+  id?: string
+  note_id?: string
+  study_id?: string
+  patient_id?: string
+  encounter_id?: string | null
+  author?: string
+  reason_for_ecg: string
+  presenting_symptoms: string
+  relevant_history: string
+  medications_allergies: string
+  clinician_observations: string
+  clinician_assessment: string
+  plan_followup: string
+  additional_comments: string
+  ai_draft_generated?: number
+  ai_draft_timestamp?: string
+  status: 'draft' | 'in_progress' | 'reviewed' | 'finalized'
+  finalized_by?: string
+  finalized_at?: string
+  revision?: number
+  created_at?: string
+  updated_at?: string
+}
+
+export interface ClinicalReport {
+  id: string
+  report_id: string
+  study_id: string
+  patient_id: string
+  encounter_id?: string | null
+  summary_json?: string
+  report_html?: string
+  status: 'draft' | 'finalized'
+  version: number
+  signed_by: string
+  finalized_at: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ClinicalOverviewData {
+  total_patients: number
+  total_studies: number
+  awaiting_review_count: number
+  in_progress_count: number
+  reviewed_finalized_count: number
+  recent_patients: Patient[]
+  recent_studies: ECGStudy[]
+  recent_notes: Array<{
+    id: string
+    note_id: string
+    study_id: string
+    patient_id: string
+    author: string
+    status: string
+    updated_at: string
+    patient_name: string
+    study_display_id: string
+  }>
+  quick_actions: Array<{ id: string; label: string; icon: string }>
+}
+
+export interface LongitudinalComparisonResult {
+  compatible: boolean
+  model_a: string
+  model_b: string
+  patient_id_a: string
+  patient_id_b: string
+  same_patient: boolean
+  study_a: {
+    id: string
+    study_id: string
+    recorded_at: string
+    status: string
+    probabilities: Record<DiagnosticClass, number>
+    flags: DiagnosticClass[]
+    quality_status: string
+    quality_score: number
+    notes?: ClinicalNote | null
+  }
+  study_b: {
+    id: string
+    study_id: string
+    recorded_at: string
+    status: string
+    probabilities: Record<DiagnosticClass, number>
+    flags: DiagnosticClass[]
+    quality_status: string
+    quality_score: number
+    notes?: ClinicalNote | null
+  }
+  delta_probabilities: Record<DiagnosticClass, number>
+}
 
 export interface ExplainResponse {
   model: string

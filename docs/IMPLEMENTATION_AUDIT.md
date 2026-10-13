@@ -44,3 +44,32 @@ The five diagnostic superclasses evaluated simultaneously via multilabel sigmoid
 3. **Multilabel Independence:**
    - All models use independent Sigmoid activations ($\sigma(z_i)$), not Softmax.
    - Validation thresholds are dynamically retrieved per model from `result_{model}.json` and `gated_thresholds_validation.csv`.
+
+---
+
+## 4. Clinician-Oriented Assistant Transformation
+
+### 4.1 Architectural Shift
+The application was reoriented from a model benchmark dashboard to a **patient-centered clinical ECG review and documentation assistant**. The primary user experience now mirrors hospital cardiology workflows:
+1. **Find or Create Patient**: Access patient demographics, past medical history, and longitudinal ECG records.
+2. **Manage ECG Studies**: Triage worklists (`pending`, `analyzed`, `reviewed`, `reported`) with clinical urgency flags (`routine`, `urgent`, `stat`).
+3. **Clinical Review Workspace**: Interactive 12-lead diagnostic viewer (standard 4x3 + rhythm strip, calibration markers, lead isolation) integrated with live multi-label AI predictions and class-specific Integrated Gradients saliency.
+4. **Structured Documentation**: SOAP notes editor with deterministic rule-based AI draft generator watermarked `[AI DRAFT — REQUIRES CLINICIAN VERIFICATION & SIGN-OFF]`.
+5. **Diagnostic Reports**: Formal clinical report preview, printable layout, electronic clinician sign-off, and version tracking (`REP-{code}-v{n}`).
+6. **Longitudinal Comparison**: Direct comparative trajectory tracking between baseline and follow-up ECG studies for the same patient.
+
+### 4.2 Database & Persistence Architecture (`server/clinical_db.py`)
+- Relational schema built over SQLite (`analyses_history.db`) with `PRAGMA foreign_keys = ON;`.
+- Entities:
+  - `patients`: Demographics, MRN, date of birth, sex, clinical history, medications.
+  - `encounters`: Clinical encounters with admission dates, primary complaints, and status.
+  - `ecg_studies`: ECG acquisitions linked to patients/encounters, storing raw 12-lead signals, sampling rates, status, and analysis IDs.
+  - `clinical_notes`: Structured SOAP notes with author credentials, AI draft flags, and timestamps.
+  - `clinical_reports`: Versioned diagnostic reports with diagnostic statements, summary findings, and sign-off status.
+- Seeded with 3 de-identified clinical test fixtures (`PAT-2026-0001` prior MI, `PAT-2026-0002` STTC, `PAT-2026-0003` normal control) linked to genuine PTB-XL sample waveforms.
+
+### 4.3 Preservation of Research & Model Capabilities
+- **Zero Mock Data**: 100% real inference using trained PyTorch checkpoints (`model_seq.pt`, `model_cnn.pt`, etc.).
+- **Research Lab**: All 7 advanced research studios (Model Lab, Explainability Studio, Multi-Model Comparison, Signal Explorer, Faithfulness Lab, Robustness Lab, Research Analytics) are preserved and accessible via dedicated secondary navigation.
+- **Safety & Disclaimers**: Prominent clinical research prototype badges and mandatory human-in-the-loop verification disclaimers displayed throughout all review, documentation, and reporting surfaces.
+

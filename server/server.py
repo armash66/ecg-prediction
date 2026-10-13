@@ -46,6 +46,27 @@ from ecg_intelligence.explainability.deletion_test import compute_faithfulness_c
 from ecg_intelligence.features.extractor import extract_handcrafted_features
 from ecg_intelligence.preprocessing.resampling import ensure_1000x12
 from ecg_intelligence.data.parser import parse_csv_ecg, parse_numpy_ecg, parse_wfdb_record
+from server.clinical_db import (
+    init_clinical_db,
+    list_patients,
+    get_patient_detail,
+    create_patient,
+    update_patient,
+    delete_patient,
+    list_ecg_studies,
+    get_ecg_study_detail,
+    create_ecg_study,
+    update_study_status,
+    delete_ecg_study,
+    update_study_analysis_result,
+    get_study_notes,
+    save_study_notes,
+    generate_deterministic_ai_draft,
+    render_clinical_report_html,
+    finalize_study_report,
+    compare_longitudinal_studies,
+    get_clinical_overview,
+)
 
 app = FastAPI(
     title="PTB-XL ECG Intelligence API",
@@ -118,6 +139,7 @@ def init_history_db():
         print(f"History DB initialization notice: {e}")
 
 init_history_db()
+init_clinical_db(DB_PATH, os.path.join(CACHE_DIR, "samples.npz"))
 
 
 def save_analysis_record(
@@ -500,6 +522,75 @@ class RobustnessRequest(BaseModel):
     experiment_type: str = Field("gaussian_noise", description="Perturbation type (gaussian_noise, baseline_drift, lead_dropout, temporal_burst)")
     intensity: Optional[float] = Field(0.05, description="Perturbation amplitude")
     lead_idx: Optional[int] = Field(0, description="Lead index for lead dropout (0-11)")
+
+
+# Clinical Request Models
+class PatientCreateRequest(BaseModel):
+    name: str
+    patient_id: Optional[str] = None
+    mrn: Optional[str] = ""
+    dob: Optional[str] = ""
+    age: Optional[int] = None
+    sex: Optional[str] = "Unknown"
+    contact: Optional[str] = ""
+    clinical_history: Optional[str] = ""
+    allergies: Optional[str] = ""
+    medications: Optional[str] = ""
+    notes: Optional[str] = ""
+    status: Optional[str] = "active"
+
+
+class PatientUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    mrn: Optional[str] = None
+    dob: Optional[str] = None
+    age: Optional[int] = None
+    sex: Optional[str] = None
+    contact: Optional[str] = None
+    clinical_history: Optional[str] = None
+    allergies: Optional[str] = None
+    medications: Optional[str] = None
+    notes: Optional[str] = None
+    status: Optional[str] = None
+
+
+class StudyCreateRequest(BaseModel):
+    patient_id: str
+    encounter_id: Optional[str] = None
+    signal: Optional[List[List[float]]] = None
+    sample_index: Optional[int] = None
+    filename: Optional[str] = "ecg_study.json"
+    assigned_clinician: Optional[str] = "Attending Clinician"
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class StudyStatusUpdateRequest(BaseModel):
+    status: str
+    assigned_clinician: Optional[str] = None
+
+
+class NoteSaveRequest(BaseModel):
+    reason_for_ecg: Optional[str] = ""
+    presenting_symptoms: Optional[str] = ""
+    relevant_history: Optional[str] = ""
+    medications_allergies: Optional[str] = ""
+    clinician_observations: Optional[str] = ""
+    clinician_assessment: Optional[str] = ""
+    plan_followup: Optional[str] = ""
+    additional_comments: Optional[str] = ""
+    author: Optional[str] = "Attending Clinician"
+    status: Optional[str] = "draft"
+
+
+class ReportFinalizeRequest(BaseModel):
+    signed_by: str
+
+
+def _dump_model(m: BaseModel) -> dict:
+    """Helper to export model dictionary cleanly across Pydantic v1 and v2."""
+    if hasattr(m, "model_dump"):
+        return m.model_dump()
+    return m.dict()
 
 
 
@@ -1943,6 +2034,379 @@ def export_analysis_report(analysis_id: str):
 </body>
 </html>"""
     return HTMLResponse(content=html_content)
+
+
+# ==========================================
+# Clinical Review & Documentation API Routes
+# ==========================================
+
+@app.get("/api/clinical/overview")
+def api_clinical_overview():
+    """
+    Returns authentic clinical summary counts, awaiting studies,
+    recent patients, recent ECGs, and recent notes from SQLite persistence.
+    """
+    try:
+        data = get_clinical_overview(DB_PATH)
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load clinical overview: {str(e)}")
+
+
+@app.get("/api/patients")
+def api_list_patients(
+    q: Optional[str] = None,
+    status: Optional[str] = None,
+    sort_by: Optional[str] = "updated_at",
+    order: Optional[str] = "desc"
+):
+    """
+    Searches, filters, and sorts patient records in the persistent database.
+    """
+    try:
+        patients = list_patients(DB_PATH, query=q, status=status, sort_by=sort_by or "updated_at", order=order or "desc")
+        return {"total": len(patients), "patients": patients}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to query patients: {str(e)}")
+
+
+@app.post("/api/patients")
+def api_create_patient(req: PatientCreateRequest):
+    """
+    Registers a new patient with auto-generated PAT-2026-XXXX ID,
+    validates required fields, and prevents duplicate records.
+    """
+    try:
+        patient = create_patient(DB_PATH, _dump_model(req))
+        return patient
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create patient: {str(e)}")
+
+
+@app.get("/api/patients/{patient_id}")
+def api_get_patient(patient_id: str):
+    """
+    Retrieves full patient chart: demographics, medical history,
+    chronological ECG studies, encounters, notes, and finalized reports.
+    """
+    pat = get_patient_detail(DB_PATH, patient_id)
+    if not pat:
+        raise HTTPException(status_code=404, detail=f"Patient '{patient_id}' not found.")
+    return pat
+
+
+@app.put("/api/patients/{patient_id}")
+def api_update_patient(patient_id: str, req: PatientUpdateRequest):
+    """
+    Updates patient details without modifying the stable internal primary key or ID.
+    """
+    updates = {k: v for k, v in _dump_model(req).items() if v is not None}
+    updated = update_patient(DB_PATH, patient_id, updates)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Patient '{patient_id}' not found.")
+    return updated
+
+
+@app.delete("/api/patients/{patient_id}")
+def api_delete_patient(patient_id: str):
+    """
+    Safely deletes a patient and associated encounters, studies, notes, and reports via cascade.
+    """
+    ok = delete_patient(DB_PATH, patient_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Patient '{patient_id}' not found.")
+    return {"status": "success", "message": f"Patient '{patient_id}' and all associated records deleted."}
+
+
+@app.get("/api/studies")
+def api_list_studies(
+    status: Optional[str] = None,
+    patient_id: Optional[str] = None,
+    q: Optional[str] = None
+):
+    """
+    Returns authentic worklist of ECG studies with patient details, validation status,
+    AI classification flags, and review progression.
+    """
+    try:
+        studies = list_ecg_studies(DB_PATH, status=status, patient_id=patient_id, query=q)
+        return {"total": len(studies), "studies": studies}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch ECG worklist: {str(e)}")
+
+
+@app.post("/api/studies")
+def api_create_study(req: StudyCreateRequest):
+    """
+    Creates an ECG study attached to an existing patient record.
+    Accepts direct 12-lead signal or reference to preloaded test sample.
+    Runs signal quality validation immediately.
+    """
+    try:
+        raw_sig = None
+        filename = req.filename or "ecg_study.json"
+
+        if req.sample_index is not None:
+            samples_data = load_samples()
+            if samples_data is None or "X" not in samples_data:
+                raise ValueError("Preloaded samples archive not available.")
+            if req.sample_index < 0 or req.sample_index >= len(samples_data["X"]):
+                raise ValueError(f"Sample index {req.sample_index} out of bounds.")
+            raw_sig = samples_data["X"][req.sample_index].astype(np.float32)
+            filename = f"sample_{req.sample_index}.npz"
+        elif req.signal is not None:
+            raw_sig = np.array(req.signal, dtype=np.float32)
+        else:
+            raise ValueError("Must provide either 'signal' 2D array or 'sample_index'.")
+
+        sig = ensure_1000x12(raw_sig)
+        quality = analyze_signal_quality(sig)
+
+        metadata = req.metadata or {
+            "format": "standard_12lead",
+            "leads": LEADS,
+            "sampling_rate": 100,
+            "duration_sec": 10.0,
+            "units": "mV",
+            "original_samples": raw_sig.shape[0] if raw_sig is not None else 1000,
+        }
+
+        study = create_ecg_study(
+            db_path=DB_PATH,
+            patient_id_or_uid=req.patient_id,
+            signal_arr=sig,
+            metadata=metadata,
+            quality_analysis=quality,
+            encounter_id=req.encounter_id,
+            filename=filename,
+            assigned_clinician=req.assigned_clinician or "Attending Clinician"
+        )
+        return study
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create ECG study: {str(e)}")
+
+
+@app.get("/api/studies/{study_id}")
+def api_get_study(study_id: str):
+    """
+    Retrieves full ECG study workspace data including 1000x12 signal,
+    quality diagnostics, AI scores, notes, and report draft.
+    """
+    study = get_ecg_study_detail(DB_PATH, study_id)
+    if not study:
+        raise HTTPException(status_code=404, detail=f"ECG study '{study_id}' not found.")
+    return study
+
+
+@app.put("/api/studies/{study_id}/status")
+def api_update_study_status(study_id: str, req: StudyStatusUpdateRequest):
+    """
+    Updates study status ('awaiting_review', 'in_progress', 'reviewed', 'finalized')
+    and assigned clinician.
+    """
+    ok = update_study_status(DB_PATH, study_id, req.status, req.assigned_clinician)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"ECG study '{study_id}' not found.")
+    return {"status": "success", "study_status": req.status}
+
+
+@app.delete("/api/studies/{study_id}")
+def api_delete_study(study_id: str):
+    """
+    Deletes an ECG study and associated clinical notes and reports.
+    """
+    ok = delete_ecg_study(DB_PATH, study_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"ECG study '{study_id}' not found.")
+    return {"status": "success", "message": f"ECG study '{study_id}' deleted."}
+
+
+@app.post("/api/studies/{study_id}/analyze")
+def api_analyze_study(study_id: str, model: Optional[str] = None):
+    """
+    Executes real PyTorch deep learning inference on the study's saved signal.
+    Updates the study record with probabilities, thresholds, and flags.
+    Transitions study status to 'in_progress' if currently awaiting review.
+    """
+    study = get_ecg_study_detail(DB_PATH, study_id)
+    if not study:
+        raise HTTPException(status_code=404, detail=f"ECG study '{study_id}' not found.")
+
+    sig_data = study.get("signal")
+    if not sig_data:
+        raise HTTPException(status_code=400, detail="Study has no signal data stored.")
+
+    target_model = model or study.get("selected_model") or _ACTIVE_MODEL
+
+    # Run actual model inference
+    analysis = analyze_ecg(AnalyzeRequest(
+        signal=sig_data,
+        model=target_model,
+        explain=None,
+        explain_steps=40
+    ))
+
+    # Determine binary detected flags
+    flags = [p["class"] for p in analysis["predictions"] if p["detected"]]
+
+    # Persist analysis results into the ecg_studies table
+    analysis_key = analysis.get("analysis_id", "")
+    update_study_analysis_result(
+        db_path=DB_PATH,
+        study_id_or_uid=study["id"],
+        model_name=target_model,
+        probs=analysis["probabilities"],
+        thresholds=analysis["thresholds"],
+        flags=flags,
+        analysis_id=analysis_key
+    )
+
+    if study.get("status") == "awaiting_review":
+        update_study_status(DB_PATH, study["id"], "in_progress")
+
+    return {
+        "study_id": study["study_id"],
+        "model": target_model,
+        "probabilities": analysis["probabilities"],
+        "thresholds": analysis["thresholds"],
+        "predictions": analysis["predictions"],
+        "flags": flags,
+        "latency_ms": analysis["latency_ms"],
+        "analysis_id": analysis_key,
+        "quality_score": study.get("quality_score"),
+        "quality_status": study.get("quality_status")
+    }
+
+
+@app.get("/api/studies/{study_id}/notes")
+def api_get_study_notes(study_id: str):
+    """
+    Fetches structured clinical notes for an ECG study.
+    """
+    notes = get_study_notes(DB_PATH, study_id)
+    if not notes:
+        return {
+            "reason_for_ecg": "",
+            "presenting_symptoms": "",
+            "relevant_history": "",
+            "medications_allergies": "",
+            "clinician_observations": "",
+            "clinician_assessment": "",
+            "plan_followup": "",
+            "additional_comments": "",
+            "author": "Attending Clinician",
+            "status": "draft"
+        }
+    return notes
+
+
+@app.post("/api/studies/{study_id}/notes")
+def api_save_study_notes(study_id: str, req: NoteSaveRequest):
+    """
+    Saves or updates clinician-entered observations, assessment, and care plan.
+    Keeps clinician observations distinct from AI predictions.
+    """
+    try:
+        saved = save_study_notes(DB_PATH, study_id, _dump_model(req))
+        return saved
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save clinical notes: {str(e)}")
+
+
+@app.post("/api/studies/{study_id}/notes/draft_ai")
+def api_draft_ai_notes(study_id: str):
+    """
+    Generates a transparent, deterministic AI draft clinical note assembled
+    strictly from recorded patient history, signal metrics, and model findings.
+    Watermarks every section with [AI DRAFT - REQUIRES CLINICIAN VERIFICATION & SIGN-OFF].
+    """
+    study = get_ecg_study_detail(DB_PATH, study_id)
+    if not study:
+        raise HTTPException(status_code=404, detail=f"ECG study '{study_id}' not found.")
+
+    draft = generate_deterministic_ai_draft(study)
+    return draft
+
+
+@app.get("/api/studies/{study_id}/report")
+def api_get_study_report(study_id: str, format: Optional[str] = "html"):
+    """
+    Builds or retrieves clinical documentation report for display, printing, or JSON export.
+    """
+    study = get_ecg_study_detail(DB_PATH, study_id)
+    if not study:
+        raise HTTPException(status_code=404, detail=f"ECG study '{study_id}' not found.")
+
+    notes = get_study_notes(DB_PATH, study["id"]) or {}
+    finalized = (study.get("status") == "finalized")
+
+    if format == "json":
+        return {
+            "patient": {
+                "id": study["patient_id"],
+                "patient_id": study["patient_display_id"],
+                "name": study["patient_name"],
+                "age": study["patient_age"],
+                "sex": study["patient_sex"],
+                "mrn": study["patient_mrn"]
+            },
+            "study": {
+                "id": study["id"],
+                "study_id": study["study_id"],
+                "recorded_at": study["recorded_at"],
+                "selected_model": study["selected_model"],
+                "probabilities": study["probabilities"],
+                "thresholds": study["thresholds"],
+                "flags": study["flags"],
+                "quality_status": study["quality_status"],
+                "quality_score": study["quality_score"],
+                "status": study["status"]
+            },
+            "notes": notes,
+            "finalized": finalized
+        }
+
+    html = render_clinical_report_html(study, notes, finalized=finalized, signed_by=notes.get("finalized_by", ""))
+    return HTMLResponse(content=html)
+
+
+@app.post("/api/studies/{study_id}/report/finalize")
+def api_finalize_report(study_id: str, req: ReportFinalizeRequest):
+    """
+    Finalizes and freezes the clinical report and study encounter.
+    Requires explicit clinician sign-off with confirmation.
+    """
+    if not req.signed_by.strip():
+        raise HTTPException(status_code=400, detail="Sign-off clinician name is required to finalize report.")
+
+    try:
+        res = finalize_study_report(DB_PATH, study_id, req.signed_by.strip())
+        return res
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to finalize report: {str(e)}")
+
+
+@app.get("/api/compare/longitudinal")
+def api_compare_longitudinal(study_a: str, study_b: str):
+    """
+    Performs longitudinal comparison between two ECG studies.
+    Returns delta probabilities, waveforms, and prior clinician notes.
+    """
+    try:
+        res = compare_longitudinal_studies(DB_PATH, study_a, study_b)
+        return res
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Longitudinal comparison failed: {str(e)}")
 
 
 # ==========================================
