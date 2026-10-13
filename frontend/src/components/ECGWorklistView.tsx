@@ -1,17 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import {
-  ClipboardList,
   Search,
-  Filter,
-  Activity,
-  Clock,
-  CheckCircle2,
-  AlertTriangle,
-  ArrowRight,
   RefreshCw,
-  User,
-  Calendar,
-  ShieldAlert,
+  ArrowRight,
 } from 'lucide-react'
 import { ECGStudy } from '../types'
 import { fetchStudies } from '../api'
@@ -42,81 +33,60 @@ export const ECGWorklistView: React.FC<ECGWorklistViewProps> = ({ onOpenStudy })
     loadStudies()
   }, [statusFilter, searchQuery])
 
-  const getStatusBadge = (status: string) => {
+  const formatStatus = (status: string) => {
     switch (status) {
       case 'finalized':
-        return { label: 'Finalized', bg: '#E8F4EE', color: '#34765A', icon: CheckCircle2 }
+        return { label: 'Finalized', color: '#34765A', bg: '#E8F4EE' }
       case 'reviewed':
-        return { label: 'Reviewed', bg: '#E8F4EE', color: '#34765A', icon: CheckCircle2 }
+        return { label: 'Reviewed', color: '#34765A', bg: '#E8F4EE' }
+      case 'analyzed':
+        return { label: 'Analyzed', color: '#2A6BB2', bg: '#EBF3FB' }
       case 'in_progress':
-        return { label: 'In Progress', bg: '#EBF3FB', color: '#2A6BB2', icon: Activity }
+        return { label: 'In Progress', color: '#2A6BB2', bg: '#EBF3FB' }
       case 'awaiting_review':
       default:
-        return { label: 'Awaiting Review', bg: '#FDF4E7', color: '#B77925', icon: Clock }
+        return { label: 'Awaiting review', color: '#B77925', bg: '#FDF4E7' }
     }
-  }
-
-  const getQualityBadge = (quality: string, score: number) => {
-    if (quality === 'optimal') {
-      return <span style={{ fontSize: '11px', color: '#34765A', fontWeight: 600 }}>Optimal ({score.toFixed(2)})</span>
-    } else if (quality === 'acceptable_with_warnings') {
-      return (
-        <span style={{ fontSize: '11px', color: '#B77925', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <AlertTriangle size={12} />
-          <span>Warnings ({score.toFixed(2)})</span>
-        </span>
-      )
-    }
-    return <span style={{ fontSize: '11px', color: '#B33A3A', fontWeight: 600 }}>Poor ({score.toFixed(2)})</span>
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '1400px', margin: '0 auto' }}>
-      {/* Worklist Header & Filter Bar */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxWidth: '1000px', margin: '0 auto' }}>
+      {/* Search and Filters Bar */}
       <div
         className="card"
         style={{
-          padding: '20px 24px',
+          padding: '16px 20px',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
           flexWrap: 'wrap',
-          gap: '16px',
+          gap: '12px',
         }}
       >
-        <div>
-          <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#252525', margin: 0 }}>
-            Electrocardiogram Clinical Worklist
-          </h2>
-          <p style={{ fontSize: '13px', color: '#777773', margin: '3px 0 0' }}>
-            Genuine ECG acquisitions registered in local persistent storage awaiting clinical review or sign-off.
-          </p>
+        <div style={{ position: 'relative', flex: '1', minWidth: '220px', maxWidth: '360px' }}>
+          <Search size={14} style={{ position: 'absolute', left: '10px', top: '10px', color: '#777773' }} />
+          <input
+            type="text"
+            placeholder="Search patient, MRN, or study ID..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{
+              padding: '7px 10px 7px 32px',
+              fontSize: '13px',
+              borderRadius: '6px',
+              border: '1px solid #E8E6E1',
+              background: '#FAFAF8',
+              width: '100%',
+            }}
+          />
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{ position: 'relative' }}>
-            <Search size={14} style={{ position: 'absolute', left: '10px', top: '10px', color: '#777773' }} />
-            <input
-              type="text"
-              placeholder="Search patient, ID, study..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              style={{
-                padding: '7px 10px 7px 30px',
-                fontSize: '13px',
-                borderRadius: '6px',
-                border: '1px solid #E8E6E1',
-                background: '#FAFAF8',
-                width: '240px',
-              }}
-            />
-          </div>
-
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             style={{
-              padding: '7px 10px',
+              padding: '7px 12px',
               fontSize: '13px',
               borderRadius: '6px',
               border: '1px solid #E8E6E1',
@@ -124,127 +94,98 @@ export const ECGWorklistView: React.FC<ECGWorklistViewProps> = ({ onOpenStudy })
               color: '#252525',
             }}
           >
-            <option value="all">All Statuses</option>
-            <option value="awaiting_review">Awaiting Review</option>
-            <option value="in_progress">In Progress</option>
+            <option value="all">All statuses</option>
+            <option value="awaiting_review">Awaiting review</option>
             <option value="reviewed">Reviewed</option>
             <option value="finalized">Finalized</option>
           </select>
 
-          <button className="btn btn-secondary btn-sm" onClick={loadStudies} title="Refresh Worklist">
-            <RefreshCw size={14} />
+          <button className="btn btn-secondary btn-sm" onClick={loadStudies} title="Refresh">
+            <RefreshCw size={13} />
           </button>
         </div>
       </div>
 
-      {/* Studies Table */}
+      {/* Compact Readable Studies Table */}
       <div className="card" style={{ padding: '0', overflow: 'hidden' }}>
         {loading ? (
-          <div style={{ padding: '48px', textAlign: 'center', color: '#777773', fontSize: '13px' }}>
-            <RefreshCw size={22} className="spin-animation" style={{ color: '#A83245', margin: '0 auto 8px' }} />
-            Loading study worklist...
+          <div style={{ padding: '40px', textAlign: 'center', color: '#777773', fontSize: '13px' }}>
+            <RefreshCw size={20} className="spin-animation" style={{ color: '#A83245', margin: '0 auto 8px' }} />
+            Loading studies...
           </div>
         ) : studies.length === 0 ? (
-          <div style={{ padding: '48px', textAlign: 'center', color: '#777773', fontSize: '14px' }}>
-            No ECG studies found matching the filter criteria.
+          <div style={{ padding: '40px', textAlign: 'center', color: '#777773', fontSize: '13px' }}>
+            No studies found.
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
               <thead>
                 <tr style={{ background: '#FAFAF8', borderBottom: '1px solid #E8E6E1', textAlign: 'left' }}>
-                  <th style={{ padding: '12px 16px', color: '#777773', fontWeight: 600 }}>Study ID</th>
-                  <th style={{ padding: '12px 16px', color: '#777773', fontWeight: 600 }}>Patient</th>
-                  <th style={{ padding: '12px 16px', color: '#777773', fontWeight: 600 }}>Acquired</th>
-                  <th style={{ padding: '12px 16px', color: '#777773', fontWeight: 600 }}>Signal Quality</th>
-                  <th style={{ padding: '12px 16px', color: '#777773', fontWeight: 600 }}>AI Model Flags</th>
-                  <th style={{ padding: '12px 16px', color: '#777773', fontWeight: 600 }}>Status</th>
-                  <th style={{ padding: '12px 16px', color: '#777773', fontWeight: 600 }}>Clinician</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'right', color: '#777773', fontWeight: 600 }}>Action</th>
+                  <th style={{ padding: '10px 16px', color: '#777773', fontWeight: 600 }}>Study ID</th>
+                  <th style={{ padding: '10px 16px', color: '#777773', fontWeight: 600 }}>Patient</th>
+                  <th style={{ padding: '10px 16px', color: '#777773', fontWeight: 600 }}>Date</th>
+                  <th style={{ padding: '10px 16px', color: '#777773', fontWeight: 600 }}>Status</th>
+                  <th style={{ padding: '10px 16px', textAlign: 'right', color: '#777773', fontWeight: 600 }}>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {studies.map((s) => {
-                  const badge = getStatusBadge(s.status)
-                  const BadgeIcon = badge.icon
+                  const statusInfo = formatStatus(s.status)
+                  const dateStr = s.created_at ? new Date(s.created_at).toLocaleDateString() : '—'
                   return (
                     <tr
                       key={s.id}
+                      onClick={() => onOpenStudy(s.study_id, s.patient_id)}
                       style={{
                         borderBottom: '1px solid #E8E6E1',
-                        transition: 'background 0.15s ease',
+                        cursor: 'pointer',
+                        transition: 'background 0.1s ease',
                       }}
                       onMouseEnter={(e) => (e.currentTarget.style.background = '#FAF9F6')}
                       onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                     >
-                      <td style={{ padding: '12px 16px' }}>
-                        <code style={{ fontWeight: 700, color: '#A83245', background: '#F8EAED', padding: '2px 6px', borderRadius: '4px' }}>
-                          {s.study_id}
-                        </code>
+                      <td style={{ padding: '11px 16px', fontWeight: 600, color: '#252525' }}>
+                        {s.study_id}
                       </td>
-                      <td style={{ padding: '12px 16px' }}>
-                        <div style={{ fontWeight: 600, color: '#252525' }}>{s.patient_name || 'Patient'}</div>
-                        <div style={{ fontSize: '11px', color: '#777773' }}>
-                          {s.patient_display_id} {s.patient_age ? `\u2022 ${s.patient_age}y` : ''} {s.patient_sex}
+                      <td style={{ padding: '11px 16px' }}>
+                        <div style={{ fontWeight: 500, color: '#252525' }}>
+                          {s.patient_name || s.patient_id}
                         </div>
-                      </td>
-                      <td style={{ padding: '12px 16px', color: '#777773' }}>
-                        {s.recorded_at?.slice(0, 16)}
-                      </td>
-                      <td style={{ padding: '12px 16px' }}>
-                        {getQualityBadge(s.quality_status, s.quality_score)}
-                      </td>
-                      <td style={{ padding: '12px 16px' }}>
-                        {s.flags && s.flags.length > 0 ? (
-                          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                            {s.flags.map((f: string) => (
-                              <span
-                                key={f}
-                                style={{
-                                  fontSize: '11px',
-                                  fontWeight: 700,
-                                  padding: '2px 6px',
-                                  borderRadius: '4px',
-                                  background: f === 'NORM' ? '#E8F4EE' : '#FDEEEE',
-                                  color: f === 'NORM' ? '#34765A' : '#B33A3A',
-                                }}
-                              >
-                                {f}
-                              </span>
-                            ))}
+                        {s.patient_mrn && (
+                          <div style={{ fontSize: '11px', color: '#777773' }}>
+                            MRN: {s.patient_mrn}
                           </div>
-                        ) : (
-                          <span style={{ color: '#9C9C96', fontSize: '12px' }}>Analysis pending</span>
                         )}
                       </td>
-                      <td style={{ padding: '12px 16px' }}>
+                      <td style={{ padding: '11px 16px', color: '#777773' }}>
+                        {dateStr}
+                      </td>
+                      <td style={{ padding: '11px 16px' }}>
                         <span
                           style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            padding: '3px 8px',
-                            borderRadius: '4px',
-                            background: badge.bg,
-                            color: badge.color,
-                            fontWeight: 600,
                             fontSize: '11px',
+                            fontWeight: 500,
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            background: statusInfo.bg,
+                            color: statusInfo.color,
                           }}
                         >
-                          <BadgeIcon size={12} />
-                          <span>{badge.label}</span>
+                          {statusInfo.label}
                         </span>
                       </td>
-                      <td style={{ padding: '12px 16px', color: '#777773', fontSize: '12px' }}>
-                        {s.assigned_clinician || 'Unassigned'}
-                      </td>
-                      <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                      <td style={{ padding: '11px 16px', textAlign: 'right' }}>
                         <button
-                          className="btn btn-primary btn-sm"
-                          onClick={() => onOpenStudy(s.id, s.patient_id)}
+                          className="btn btn-ghost btn-sm"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onOpenStudy(s.study_id, s.patient_id)
+                          }}
+                          style={{ color: '#A83245', fontSize: '12px', padding: '4px 8px' }}
                         >
-                          <Activity size={13} />
-                          <span>Review</span>
+                          <span>Review ECG</span>
+                          <ArrowRight size={13} />
                         </button>
                       </td>
                     </tr>

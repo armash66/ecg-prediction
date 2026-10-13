@@ -1,13 +1,12 @@
-import React from 'react'
+import React, { useState } from 'react'
 import {
   Layers,
   Waves,
+  Cpu,
+  FlaskConical,
   GitCompare,
   ShieldCheck,
   Sliders,
-  Cpu,
-  LineChart,
-  FlaskConical,
 } from 'lucide-react'
 import { ResearchSubTab } from '../types'
 import { useAnalysis } from '../context/AnalysisContext'
@@ -17,17 +16,6 @@ import { ModelComparisonView } from './ModelComparisonView'
 import { FaithfulnessLabView } from './FaithfulnessLabView'
 import { RobustnessLabView } from './RobustnessLabView'
 import { ModelLabView } from './ModelLabView'
-import { ResearchAnalyticsView } from './ResearchAnalyticsView'
-
-const SUB_TABS: Array<{ id: ResearchSubTab; label: string; icon: React.ComponentType<any> }> = [
-  { id: 'explainability', label: 'Explainability Studio', icon: Layers },
-  { id: 'signal_explorer', label: 'Signal Explorer', icon: Waves },
-  { id: 'model_comparison', label: 'Model Comparison', icon: GitCompare },
-  { id: 'faithfulness', label: 'Faithfulness Lab', icon: ShieldCheck },
-  { id: 'robustness', label: 'Robustness Lab', icon: Sliders },
-  { id: 'modellab', label: 'Model Lab', icon: Cpu },
-  { id: 'research_analytics', label: 'Research Analytics', icon: LineChart },
-]
 
 export const ResearchLabView: React.FC = () => {
   const {
@@ -38,70 +26,161 @@ export const ResearchLabView: React.FC = () => {
     setActiveModel,
   } = useAnalysis()
 
+  // Sub-selector for Experiments
+  const [experimentType, setExperimentType] = useState<'comparison' | 'faithfulness' | 'robustness'>('comparison')
+
+  // Map legacy subtabs to the 4 simplified ones
+  const activeSection: 'performance' | 'explainability' | 'signals' | 'experiments' =
+    researchSubTab === 'performance' || researchSubTab === 'modellab' || researchSubTab === 'research_analytics'
+      ? 'performance'
+      : researchSubTab === 'signals' || researchSubTab === 'signal_explorer'
+      ? 'signals'
+      : researchSubTab === 'experiments' || researchSubTab === 'model_comparison' || researchSubTab === 'faithfulness' || researchSubTab === 'robustness'
+      ? 'experiments'
+      : 'explainability'
+
+  const handleSelectSection = (sec: 'performance' | 'explainability' | 'signals' | 'experiments') => {
+    setResearchSubTab(sec)
+  }
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '1600px', margin: '0 auto' }}>
-      {/* Secondary Sub-Navigation Toolbar */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxWidth: '1400px', margin: '0 auto' }}>
+      {/* 4 Clean Secondary Sections */}
       <div
         className="card"
         style={{
-          padding: '8px 12px',
+          padding: '8px 14px',
           display: 'flex',
+          justifyContent: 'space-between',
           alignItems: 'center',
-          gap: '6px',
+          flexWrap: 'wrap',
+          gap: '8px',
           background: '#FFFFFF',
-          overflowX: 'auto',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '0 8px', color: '#A83245', fontWeight: 700, fontSize: '13px' }}>
-          <FlaskConical size={16} />
-          <span>Research Lab:</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          {[
+            { id: 'performance' as const, label: 'Model Performance', icon: Cpu },
+            { id: 'explainability' as const, label: 'Explainability', icon: Layers },
+            { id: 'signals' as const, label: 'Signal Analysis', icon: Waves },
+            { id: 'experiments' as const, label: 'Experiments', icon: FlaskConical },
+          ].map((item) => {
+            const Icon = item.icon
+            const isActive = activeSection === item.id
+            return (
+              <button
+                key={item.id}
+                onClick={() => handleSelectSection(item.id)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '7px 14px',
+                  borderRadius: '6px',
+                  fontSize: '13px',
+                  fontWeight: isActive ? 600 : 500,
+                  border: 'none',
+                  background: isActive ? '#F8EAED' : 'transparent',
+                  color: isActive ? '#A83245' : '#777773',
+                  cursor: 'pointer',
+                  transition: 'all 0.1s ease',
+                }}
+              >
+                <Icon size={14} />
+                <span>{item.label}</span>
+              </button>
+            )
+          })}
         </div>
 
-        {SUB_TABS.map((tab) => {
-          const Icon = tab.icon
-          const isActive = researchSubTab === tab.id
-          return (
+        {/* Experiment sub-selector when on Experiments tab */}
+        {activeSection === 'experiments' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#FAFAF8', padding: '3px 6px', borderRadius: '6px', border: '1px solid #E8E6E1' }}>
             <button
-              key={tab.id}
-              onClick={() => setResearchSubTab(tab.id)}
+              onClick={() => setExperimentType('comparison')}
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: '6px',
-                padding: '6px 12px',
-                borderRadius: '6px',
+                gap: '4px',
+                padding: '4px 10px',
                 fontSize: '12px',
-                fontWeight: isActive ? 600 : 500,
                 border: 'none',
-                background: isActive ? '#F8EAED' : 'transparent',
-                color: isActive ? '#A83245' : '#777773',
+                borderRadius: '4px',
+                background: experimentType === 'comparison' ? '#FFFFFF' : 'transparent',
+                fontWeight: experimentType === 'comparison' ? 600 : 400,
+                color: experimentType === 'comparison' ? '#252525' : '#777773',
                 cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                transition: 'all 0.15s ease',
+                boxShadow: experimentType === 'comparison' ? '0 1px 3px rgba(0,0,0,0.06)' : 'none',
               }}
             >
-              <Icon size={14} />
-              <span>{tab.label}</span>
+              <GitCompare size={12} />
+              <span>Compare models</span>
             </button>
-          )
-        })}
+            <button
+              onClick={() => setExperimentType('faithfulness')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '4px 10px',
+                fontSize: '12px',
+                border: 'none',
+                borderRadius: '4px',
+                background: experimentType === 'faithfulness' ? '#FFFFFF' : 'transparent',
+                fontWeight: experimentType === 'faithfulness' ? 600 : 400,
+                color: experimentType === 'faithfulness' ? '#252525' : '#777773',
+                cursor: 'pointer',
+                boxShadow: experimentType === 'faithfulness' ? '0 1px 3px rgba(0,0,0,0.06)' : 'none',
+              }}
+            >
+              <ShieldCheck size={12} />
+              <span>Explanation testing</span>
+            </button>
+            <button
+              onClick={() => setExperimentType('robustness')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '4px 10px',
+                fontSize: '12px',
+                border: 'none',
+                borderRadius: '4px',
+                background: experimentType === 'robustness' ? '#FFFFFF' : 'transparent',
+                fontWeight: experimentType === 'robustness' ? 600 : 400,
+                color: experimentType === 'robustness' ? '#252525' : '#777773',
+                cursor: 'pointer',
+                boxShadow: experimentType === 'robustness' ? '0 1px 3px rgba(0,0,0,0.06)' : 'none',
+              }}
+            >
+              <Sliders size={12} />
+              <span>Robustness tests</span>
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Sub-view Rendering */}
+      {/* Render Active View */}
       <div>
-        {researchSubTab === 'explainability' && <ExplainabilityView />}
-        {researchSubTab === 'signal_explorer' && <SignalExplorerView />}
-        {researchSubTab === 'model_comparison' && <ModelComparisonView />}
-        {researchSubTab === 'faithfulness' && <FaithfulnessLabView />}
-        {researchSubTab === 'robustness' && <RobustnessLabView />}
-        {researchSubTab === 'modellab' && (
+        {activeSection === 'performance' && (
           <ModelLabView
             models={models}
             activeModel={activeModel}
             onModelSwitched={(newM) => setActiveModel(newM)}
           />
         )}
-        {researchSubTab === 'research_analytics' && <ResearchAnalyticsView />}
+
+        {activeSection === 'explainability' && <ExplainabilityView />}
+
+        {activeSection === 'signals' && <SignalExplorerView />}
+
+        {activeSection === 'experiments' && (
+          <div>
+            {experimentType === 'comparison' && <ModelComparisonView />}
+            {experimentType === 'faithfulness' && <FaithfulnessLabView />}
+            {experimentType === 'robustness' && <RobustnessLabView />}
+          </div>
+        )}
       </div>
     </div>
   )

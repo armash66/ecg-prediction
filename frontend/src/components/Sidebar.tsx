@@ -3,24 +3,15 @@ import {
   LayoutDashboard,
   ClipboardList,
   Users,
-  Activity,
-  Clock,
   FileText,
   FlaskConical,
   Settings,
   HeartPulse,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
-  Cpu,
-  Layers,
-  GitCompare,
-  Waves,
-  ShieldCheck,
-  Sliders,
-  LineChart,
+  Activity,
 } from 'lucide-react'
-import { NavigationTab, ResearchSubTab, BackendHealth } from '../types'
+import { NavigationTab, BackendHealth } from '../types'
 import { useAnalysis } from '../context/AnalysisContext'
 
 interface SidebarProps {
@@ -31,77 +22,57 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, health }) => {
   const [collapsed, setCollapsed] = useState<boolean>(false)
-  const [researchExpanded, setResearchExpanded] = useState<boolean>(true)
-  const {
-    analysisResult,
-    researchSubTab,
-    setResearchSubTab,
-    selectedStudy,
-  } = useAnalysis()
+  const { selectedStudy } = useAnalysis()
 
-  const mainNavItems = [
+  // Simplified 5 primary sections
+  const primaryNavItems: Array<{ id: NavigationTab; label: string; icon: React.ComponentType<any> }> = [
     {
-      id: 'clinical_overview' as NavigationTab,
-      label: 'Clinical Overview',
+      id: 'overview',
+      label: 'Overview',
       icon: LayoutDashboard,
-      badge: null,
     },
     {
-      id: 'worklist' as NavigationTab,
+      id: 'worklist',
       label: 'ECG Worklist',
       icon: ClipboardList,
-      badge: null,
     },
     {
-      id: 'patients' as NavigationTab,
+      id: 'patients',
       label: 'Patients',
       icon: Users,
-      badge: null,
     },
     {
-      id: 'ecg_review' as NavigationTab,
-      label: 'ECG Review',
-      icon: Activity,
-      badge: selectedStudy ? selectedStudy.study_id : (analysisResult ? 'Active' : null),
-      badgeType: 'success',
-    },
-    {
-      id: 'encounters' as NavigationTab,
-      label: 'Encounters & History',
-      icon: Clock,
-      badge: null,
-    },
-    {
-      id: 'reports' as NavigationTab,
-      label: 'Clinical Reports',
+      id: 'reports',
+      label: 'Reports',
       icon: FileText,
-      badge: null,
+    },
+    {
+      id: 'research',
+      label: 'Research',
+      icon: FlaskConical,
     },
   ]
 
-  const researchSubItems = [
-    { id: 'explainability' as ResearchSubTab, label: 'Explainability Studio', icon: Layers },
-    { id: 'signal_explorer' as ResearchSubTab, label: 'Signal Explorer', icon: Waves },
-    { id: 'model_comparison' as ResearchSubTab, label: 'Model Comparison', icon: GitCompare },
-    { id: 'faithfulness' as ResearchSubTab, label: 'Faithfulness Lab', icon: ShieldCheck },
-    { id: 'robustness' as ResearchSubTab, label: 'Robustness Lab', icon: Sliders },
-    { id: 'modellab' as ResearchSubTab, label: 'Model Lab', icon: Cpu },
-    { id: 'research_analytics' as ResearchSubTab, label: 'Research Analytics', icon: LineChart },
-  ]
-
-  const isResearchActive = currentTab === 'research_lab' || [
-    'explainability',
-    'signal_explorer',
-    'model_comparison',
-    'faithfulness',
-    'robustness',
-    'modellab',
-    'research_analytics',
-  ].includes(currentTab)
-
-  const handleResearchSubClick = (sub: ResearchSubTab) => {
-    setResearchSubTab(sub)
-    onSelectTab('research_lab')
+  const isTabActive = (tabId: NavigationTab) => {
+    if (tabId === 'overview') {
+      return currentTab === 'overview' || currentTab === 'clinical_overview'
+    }
+    if (tabId === 'research') {
+      return (
+        currentTab === 'research' ||
+        currentTab === 'research_lab' ||
+        [
+          'explainability',
+          'signal_explorer',
+          'model_comparison',
+          'faithfulness',
+          'robustness',
+          'modellab',
+          'research_analytics',
+        ].includes(currentTab)
+      )
+    }
+    return currentTab === tabId
   }
 
   const healthStatus = health?.status || 'offline'
@@ -111,11 +82,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, healt
       <div className="sidebar-header">
         <div
           className="brand-title"
-          onClick={() => onSelectTab('clinical_overview')}
+          onClick={() => onSelectTab('overview')}
           style={{ cursor: 'pointer' }}
           title="ECG Intelligence Home"
         >
-          <HeartPulse size={22} className="brand-dot" />
+          <HeartPulse size={20} className="brand-dot" />
           {!collapsed && <span>ECG Intelligence</span>}
         </div>
         <button
@@ -128,114 +99,62 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, healt
         </button>
       </div>
 
-      {!collapsed && (
-        <div className="brand-subtitle">
-          Clinical Review & Documentation
-        </div>
-      )}
-
       <nav className="sidebar-nav">
-        {mainNavItems.map((item) => {
+        {primaryNavItems.map((item) => {
           const Icon = item.icon
-          const isActive = currentTab === item.id
+          const active = isTabActive(item.id)
           return (
             <button
               key={item.id}
-              className={`nav-item ${isActive ? 'active' : ''}`}
+              className={`nav-item ${active ? 'active' : ''}`}
               onClick={() => onSelectTab(item.id)}
               title={collapsed ? item.label : undefined}
             >
               <Icon className="nav-item-icon" size={18} />
-              {!collapsed && (
-                <>
-                  <span className="nav-item-text">{item.label}</span>
-                  {item.badge && (
-                    <span className={`nav-badge ${item.badgeType || 'default'}`}>
-                      {item.badge}
-                    </span>
-                  )}
-                </>
-              )}
+              {!collapsed && <span className="nav-item-text">{item.label}</span>}
             </button>
           )
         })}
 
-        {/* Research Lab parent section */}
-        <div className="nav-group">
+        {/* If an ECG review is active, show contextual link back to review */}
+        {currentTab === 'ecg_review' && selectedStudy && (
+          <div style={{ marginTop: '12px', padding: collapsed ? '0' : '0 8px' }}>
+            <button
+              className="nav-item active"
+              onClick={() => onSelectTab('ecg_review')}
+              title={collapsed ? 'Active Review' : undefined}
+              style={{
+                background: '#F8EAED',
+                borderColor: 'rgba(168, 50, 69, 0.25)',
+                color: '#A83245',
+              }}
+            >
+              <Activity className="nav-item-icon" size={18} />
+              {!collapsed && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', overflow: 'hidden' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    Active Review
+                  </span>
+                  <span style={{ fontSize: '12px', color: '#252525', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '140px' }}>
+                    {selectedStudy.study_id}
+                  </span>
+                </div>
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* Small bottom Settings option */}
+        <div style={{ marginTop: 'auto', paddingTop: '16px' }}>
           <button
-            className={`nav-item ${isResearchActive ? 'active' : ''}`}
-            onClick={() => {
-              if (collapsed) {
-                onSelectTab('research_lab')
-              } else {
-                onSelectTab('research_lab')
-                setResearchExpanded(!researchExpanded)
-              }
-            }}
-            title={collapsed ? 'Research Lab' : undefined}
+            className={`nav-item ${currentTab === 'settings' ? 'active' : ''}`}
+            onClick={() => onSelectTab('settings')}
+            title={collapsed ? 'Settings' : undefined}
           >
-            <FlaskConical className="nav-item-icon" size={18} />
-            {!collapsed && (
-              <>
-                <span className="nav-item-text" style={{ fontWeight: 600 }}>Research Lab</span>
-                <ChevronDown
-                  size={14}
-                  style={{
-                    marginLeft: 'auto',
-                    transform: researchExpanded ? 'rotate(0deg)' : 'rotate(-90deg)',
-                    transition: 'transform 0.15s ease'
-                  }}
-                />
-              </>
-            )}
+            <Settings className="nav-item-icon" size={17} />
+            {!collapsed && <span className="nav-item-text">Settings</span>}
           </button>
-
-          {/* Research Lab secondary items */}
-          {!collapsed && researchExpanded && (
-            <div className="nav-subgroup" style={{ paddingLeft: '14px', marginTop: '2px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              {researchSubItems.map((sub) => {
-                const SubIcon = sub.icon
-                const isSubActive = isResearchActive && researchSubTab === sub.id
-                return (
-                  <button
-                    key={sub.id}
-                    className={`nav-subitem ${isSubActive ? 'active' : ''}`}
-                    onClick={() => handleResearchSubClick(sub.id)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '6px 10px',
-                      fontSize: '12px',
-                      color: isSubActive ? '#A83245' : '#777773',
-                      background: isSubActive ? '#F8EAED' : 'transparent',
-                      borderRadius: '6px',
-                      border: 'none',
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                      fontWeight: isSubActive ? 600 : 400,
-                      transition: 'all 0.15s ease'
-                    }}
-                  >
-                    <SubIcon size={14} />
-                    <span>{sub.label}</span>
-                  </button>
-                )
-              })}
-            </div>
-          )}
         </div>
-
-        {/* Settings */}
-        <button
-          className={`nav-item ${currentTab === 'settings' ? 'active' : ''}`}
-          onClick={() => onSelectTab('settings')}
-          title={collapsed ? 'Settings' : undefined}
-          style={{ marginTop: 'auto' }}
-        >
-          <Settings className="nav-item-icon" size={18} />
-          {!collapsed && <span className="nav-item-text">Settings</span>}
-        </button>
       </nav>
 
       <div className="sidebar-footer">
@@ -243,7 +162,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, healt
           <div className={`status-dot ${healthStatus}`} />
           {!collapsed && (
             <span>
-              {healthStatus === 'healthy' ? 'Engine Online' : healthStatus === 'degraded' ? 'Degraded' : 'Offline'}
+              {healthStatus === 'healthy' ? 'Engine online' : healthStatus === 'degraded' ? 'Degraded' : 'Offline'}
             </span>
           )}
         </div>

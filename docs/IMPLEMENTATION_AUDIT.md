@@ -73,3 +73,32 @@ The application was reoriented from a model benchmark dashboard to a **patient-c
 - **Research Lab**: All 7 advanced research studios (Model Lab, Explainability Studio, Multi-Model Comparison, Signal Explorer, Faithfulness Lab, Robustness Lab, Research Analytics) are preserved and accessible via dedicated secondary navigation.
 - **Safety & Disclaimers**: Prominent clinical research prototype badges and mandatory human-in-the-loop verification disclaimers displayed throughout all review, documentation, and reporting surfaces.
 
+---
+
+## 5. Product Simplification & Interface Refinement
+
+### 5.1 Primary Navigation Streamlining
+- Reduced sidebar to 5 primary items: **Overview**, **ECG Worklist**, **Patients**, **Reports**, **Research**, plus a small bottom-of-sidebar **Settings** link.
+- Moved ECG Review into the contextual workflow: opening a study from the Worklist or Patient record navigates directly to the review workspace.
+- Consolidated encounters and historical notes inside the relevant patient record tabs.
+
+### 5.2 Plain-Language Terminology (Removed Buzzwords)
+- "Clinical Overview" $\to$ "Overview"
+- "Multilabel Inference" $\to$ "AI Analysis"
+- "Explainability Studio" $\to$ "Why this result?"
+- "Interventional Lead Ablation" $\to$ "Compare leads"
+- "Perturbation Faithfulness" $\to$ "Explanation testing"
+- "Longitudinal Delta" $\to$ "Changes since previous ECG"
+- "Prediction Stability Score" $\to$ "Change in model results"
+- "Diagnostic Superclass" $\to$ "ECG category"
+- "Temporal Attribution Tensor" $\to$ "Important parts of the ECG"
+- Removed marketing terms ("next-generation intelligence", "clinical-grade AI", "revolutionary").
+
+### 5.3 Calm, Focused Workflows
+1. **Overview**: Displays a simple welcome, two primary buttons ("Open worklist", "Add patient"), 3 useful database counts (Studies awaiting review, Recently reviewed studies, Total registered patients), and a short recent-activity list.
+2. **ECG Worklist**: Compact 5-column table (Study ID, Patient, Date, Status, Action) with search and status filters; clicking any row navigates directly to review.
+3. **Patient Record**: Clean header with demographics and 3 organized tabs: *Summary*, *ECG Studies*, and *Notes & History*.
+4. **ECG Review**: Large 12-lead waveform viewer given primary screen prominence; compact 5-class AI analysis row (CD, HYP, MI, NORM, STTC); tabbed secondary panel for *Clinician Notes*, *Why this result?*, *Signal Quality*, and *Report Preview*.
+5. **Research Organization**: Grouped into 4 clean sections: *Model Performance*, *Explainability*, *Signal Analysis*, and *Experiments* (with unified selector for model comparison, explanation testing, and robustness tests).
+
+

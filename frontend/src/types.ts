@@ -226,25 +226,30 @@ export interface AnalysisResponse {
 }
 
 export type ResearchSubTab =
-  | 'modellab'
+  | 'performance'
   | 'explainability'
-  | 'model_comparison'
+  | 'signals'
+  | 'experiments'
+  // Compatibility with sub-routes
+  | 'modellab'
   | 'signal_explorer'
+  | 'model_comparison'
   | 'faithfulness'
   | 'robustness'
   | 'research_analytics'
 
 export type NavigationTab =
-  | 'clinical_overview'
+  | 'overview'
   | 'worklist'
   | 'patients'
-  | 'ecg_review'
-  | 'encounters'
   | 'reports'
-  | 'research_lab'
+  | 'research'
+  | 'ecg_review'
   | 'settings'
-  // Compatibility with existing sub-routes
-  | 'overview'
+  // Compatibility aliases
+  | 'clinical_overview'
+  | 'encounters'
+  | 'research_lab'
   | 'analysis'
   | 'signal_explorer'
   | 'explainability'

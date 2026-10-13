@@ -1,5 +1,5 @@
 import React from 'react'
-import { Activity, ShieldCheck, Zap, User, FileText } from 'lucide-react'
+import { Activity, User } from 'lucide-react'
 import { BackendHealth, ECGStudy } from '../types'
 
 interface HeaderProps {
@@ -37,56 +37,44 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="header-actions" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
         {selectedStudy && (
           <div
-            className="active-model-pill"
             style={{
               background: '#F8EAED',
-              borderColor: 'rgba(168, 50, 69, 0.25)',
+              border: '1px solid rgba(168, 50, 69, 0.2)',
               color: '#A83245',
-              fontWeight: 600,
               fontSize: '12px',
+              fontWeight: 500,
               padding: '4px 10px',
               borderRadius: '6px',
               display: 'flex',
               alignItems: 'center',
-              gap: '6px'
+              gap: '6px',
             }}
           >
             <User size={13} />
-            <span>{selectedStudy.patient_display_id || selectedStudy.patient_id} ({selectedStudy.patient_name || 'Patient'})</span>
-            <span style={{ color: '#777773', fontWeight: 400 }}>\u2022</span>
+            <span>{selectedStudy.patient_name || selectedStudy.patient_id}</span>
+            <span style={{ color: '#777773' }}>\u2022</span>
             <span>{selectedStudy.study_id}</span>
           </div>
         )}
 
-        <div className="active-model-pill">
-          <Zap size={13} style={{ color: 'var(--accent-burgundy)' }} />
-          <span>Active Model: <b>{activeModel.toUpperCase()}</b></span>
-        </div>
-
         <div
-          className="active-model-pill"
           style={{
             fontSize: '11px',
-            background: '#FDF4E7',
-            borderColor: '#E8E6E1',
-            color: '#B77925',
-            fontWeight: 600,
+            color: '#777773',
+            background: '#FAFAF8',
+            border: '1px solid #E8E6E1',
             padding: '4px 8px',
-            borderRadius: '6px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px'
+            borderRadius: '4px',
           }}
-          title="Clinical prototype for research and evaluation purposes only. Not certified for autonomous diagnosis."
+          title="Clinical prototype for evaluation purposes. Not certified for autonomous diagnosis."
         >
-          <ShieldCheck size={12} />
-          <span>Decision Support Prototype</span>
+          Review Support Prototype
         </div>
 
         {showReviewButton && onOpenReview && (
           <button className="btn btn-primary btn-sm" onClick={onOpenReview}>
-            <Activity size={14} />
-            <span>Open ECG Review</span>
+            <Activity size={13} />
+            <span>Open Review</span>
           </button>
         )}
       </div>
