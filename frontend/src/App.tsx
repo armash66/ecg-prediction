@@ -27,78 +27,78 @@ import { ModelLabView } from './components/ModelLabView'
 
 const TAB_TITLES: Record<NavigationTab, { title: string; subtitle: string }> = {
   clinical_overview: {
-    title: 'Clinical Overview Dashboard',
-    subtitle: 'Encounter Highlights, Pending Studies & Quick Actions',
+    title: 'Overview',
+    subtitle: 'Studies awaiting review, patient encounters, and recent activity.',
   },
   worklist: {
-    title: 'ECG Study Worklist',
-    subtitle: '12-Lead Electrocardiograms Awaiting Clinical Review & Interpretation',
+    title: 'ECG Worklist',
+    subtitle: '12-lead acquisitions awaiting clinical review or sign-off.',
   },
   patients: {
-    title: 'Patients Directory & Longitudinal Charts',
-    subtitle: 'Patient Demographics, Clinical History & Associated ECG Encounters',
+    title: 'Patients',
+    subtitle: 'Patient records, clinical history, and attached ECG studies.',
   },
   ecg_review: {
-    title: 'Clinical ECG Review Workspace',
-    subtitle: 'Interactive 12-Lead Viewer, Multilabel AI Findings & Structured Documentation',
+    title: 'ECG Review',
+    subtitle: '12-lead waveforms, AI analysis, and clinical documentation.',
   },
   encounters: {
-    title: 'Encounters & History Studio',
-    subtitle: 'Longitudinal ECG Comparison, Waveform Tracking & Model Delta Analysis',
+    title: 'Encounters & History',
+    subtitle: 'Longitudinal comparison and changes since previous ECG.',
   },
   reports: {
-    title: 'Clinical Reports & Documentation',
-    subtitle: 'Printable HTML/PDF Reports, JSON Summaries & Encounter Sign-Offs',
+    title: 'Reports',
+    subtitle: 'Printable medical reports and finalized encounter summaries.',
   },
   research_lab: {
-    title: 'Research & Explainability Laboratory',
-    subtitle: 'Integrated Gradients, Model Agreement, Faithfulness & Robustness Experiments',
+    title: 'Research Lab',
+    subtitle: 'Model benchmarks, explainability, and technical experiments.',
   },
   settings: {
-    title: 'System Settings & Clinical Governance',
-    subtitle: 'Inference Architecture Selection, Privacy Protocols & Regulatory Disclosures',
+    title: 'Settings',
+    subtitle: 'Model selection, system status, and configuration.',
   },
 
-  // Legacy mappings
+  // Compatibility mappings
   overview: {
-    title: 'Research Overview Dashboard',
-    subtitle: 'PTB-XL Benchmark Highlights & System Status',
+    title: 'Overview',
+    subtitle: 'Studies awaiting review, patient encounters, and recent activity.',
   },
   analysis: {
-    title: '12-Lead ECG Analysis Workspace',
-    subtitle: 'Multilabel Inference, Threshold Interpretation & Signal Diagnostics',
+    title: 'AI Analysis',
+    subtitle: '12-lead analysis and signal diagnostics.',
   },
   signal_explorer: {
-    title: 'Signal Explorer & Time-Frequency Studio',
-    subtitle: 'High-Resolution 12-Lead Viewer, STFT Spectrogram & Morphology Metrics',
+    title: 'Signal Analysis',
+    subtitle: '12-lead waveforms, STFT spectrogram, and morphology metrics.',
   },
   explainability: {
-    title: 'Explainability & Attribution Studio',
-    subtitle: 'Time \u00D7 Lead Heatmaps, Class \u00D7 Lead Matrices & Diagnostic Completeness',
+    title: 'Why this result?',
+    subtitle: 'Important parts of the ECG and lead importance ranking.',
   },
   model_comparison: {
-    title: 'Multi-Model Evaluation & Agreement',
-    subtitle: 'Simultaneous Multi-Model Inference, \u0394P Heatmaps & Consensus Matrix',
+    title: 'Compare models',
+    subtitle: 'Multi-model evaluation and agreement measures.',
   },
   faithfulness: {
-    title: 'Faithfulness & Perturbation Laboratory',
-    subtitle: 'Deletion / Insertion Trajectories, AUDC / AUIC & 12-Lead Ablation',
+    title: 'Explanation testing',
+    subtitle: 'Deletion and insertion tests comparing attributions.',
   },
   robustness: {
-    title: 'Controlled Robustness & Stress-Testing',
-    subtitle: 'Electrode Jitter, Baseline Drift, Lead Dropout & Stability Scoring',
+    title: 'Robustness tests',
+    subtitle: 'Controlled testing with noise, drift, and lead dropouts.',
   },
   research_analytics: {
-    title: 'Research Benchmark Analytics & Leaderboard',
-    subtitle: 'Hold-Out Test Fold 10 Performance Metrics & Validation Thresholds',
+    title: 'Model Performance',
+    subtitle: 'Benchmark leaderboard and validation thresholds.',
   },
   history: {
-    title: 'Analysis Session History & Persistence',
-    subtitle: 'SQLite Database of Recorded Analyses, Inferences & Reports',
+    title: 'Analysis History',
+    subtitle: 'Recorded analyses and report history.',
   },
   modellab: {
-    title: 'Comparative Model Laboratory',
-    subtitle: 'Architecture Specifications, Checkpoint Registry & Metric Browser',
+    title: 'Model Performance',
+    subtitle: 'Model specifications and performance comparisons.',
   },
 }
 

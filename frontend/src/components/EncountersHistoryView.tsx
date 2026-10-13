@@ -83,10 +83,10 @@ export const EncountersHistoryView: React.FC<EncountersHistoryViewProps> = ({ on
       >
         <div>
           <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#252525', margin: 0 }}>
-            Longitudinal ECG Encounter History & Comparison Studio
+            Encounters & History
           </h2>
           <p style={{ fontSize: '13px', color: '#777773', margin: '3px 0 0' }}>
-            Compare serial electrocardiograms over time, inspect waveform interval changes, and review delta model predictions.
+            Compare serial electrocardiograms over time, inspect waveform changes, and track score differences.
           </p>
         </div>
       </div>

@@ -405,10 +405,10 @@ export const ClinicalECGReviewView: React.FC<ClinicalECGReviewViewProps> = ({
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <div>
                 <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#252525', margin: 0 }}>
-                  Experimental AI Pattern Recognition (Model: {study?.selected_model?.toUpperCase() || activeModel.toUpperCase()})
+                  AI Pattern Analysis (Model: {study?.selected_model?.toUpperCase() || activeModel.toUpperCase()})
                 </h3>
                 <span style={{ fontSize: '12px', color: '#777773' }}>
-                  Independent sigmoid probabilities with verified decision thresholds. Non-diagnostic decision support.
+                  Independent probabilities with decision thresholds. Results support clinical review.
                 </span>
               </div>
             </div>

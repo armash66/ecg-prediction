@@ -42,7 +42,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, healt
   const mainNavItems = [
     {
       id: 'clinical_overview' as NavigationTab,
-      label: 'Clinical Overview',
+      label: 'Overview',
       icon: LayoutDashboard,
       badge: null,
     },
@@ -73,20 +73,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, healt
     },
     {
       id: 'reports' as NavigationTab,
-      label: 'Clinical Reports',
+      label: 'Reports',
       icon: FileText,
       badge: null,
     },
   ]
 
   const researchSubItems = [
-    { id: 'explainability' as ResearchSubTab, label: 'Explainability Studio', icon: Layers },
-    { id: 'signal_explorer' as ResearchSubTab, label: 'Signal Explorer', icon: Waves },
-    { id: 'model_comparison' as ResearchSubTab, label: 'Model Comparison', icon: GitCompare },
-    { id: 'faithfulness' as ResearchSubTab, label: 'Faithfulness Lab', icon: ShieldCheck },
-    { id: 'robustness' as ResearchSubTab, label: 'Robustness Lab', icon: Sliders },
-    { id: 'modellab' as ResearchSubTab, label: 'Model Lab', icon: Cpu },
-    { id: 'research_analytics' as ResearchSubTab, label: 'Research Analytics', icon: LineChart },
+    { id: 'explainability' as ResearchSubTab, label: 'Why this result?', icon: Layers },
+    { id: 'signal_explorer' as ResearchSubTab, label: 'Signal Analysis', icon: Waves },
+    { id: 'model_comparison' as ResearchSubTab, label: 'Compare models', icon: GitCompare },
+    { id: 'faithfulness' as ResearchSubTab, label: 'Explanation testing', icon: ShieldCheck },
+    { id: 'robustness' as ResearchSubTab, label: 'Robustness tests', icon: Sliders },
+    { id: 'modellab' as ResearchSubTab, label: 'Model Performance', icon: Cpu },
+    { id: 'research_analytics' as ResearchSubTab, label: 'Benchmark Analytics', icon: LineChart },
   ]
 
   const isResearchActive = currentTab === 'research_lab' || [

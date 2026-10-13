@@ -86,10 +86,10 @@ export const ECGWorklistView: React.FC<ECGWorklistViewProps> = ({ onOpenStudy })
       >
         <div>
           <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#252525', margin: 0 }}>
-            Electrocardiogram Clinical Worklist
+            ECG Worklist
           </h2>
           <p style={{ fontSize: '13px', color: '#777773', margin: '3px 0 0' }}>
-            Genuine ECG acquisitions registered in local persistent storage awaiting clinical review or sign-off.
+            12-lead acquisitions registered and awaiting clinical review or sign-off.
           </p>
         </div>
 

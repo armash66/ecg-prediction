@@ -95,7 +95,7 @@ export const ClinicalOverviewView: React.FC<ClinicalOverviewViewProps> = ({
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
             <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#252525', margin: 0 }}>
-              Clinical ECG Review & Documentation Workspace
+              Overview
             </h2>
             <span
               style={{
@@ -111,8 +111,7 @@ export const ClinicalOverviewView: React.FC<ClinicalOverviewViewProps> = ({
             </span>
           </div>
           <p style={{ fontSize: '13px', color: '#777773', margin: 0, maxWidth: '780px' }}>
-            Organize 12-lead ECG studies, inspect rhythm and ST-T morphology, review multilabel deep AI predictions,
-            generate structured interpretations, and document finalized encounter reports.
+            Review 12-lead ECG studies, inspect AI analysis, and document patient encounters.
           </p>
         </div>
 

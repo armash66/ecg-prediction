@@ -20,13 +20,13 @@ import { ModelLabView } from './ModelLabView'
 import { ResearchAnalyticsView } from './ResearchAnalyticsView'
 
 const SUB_TABS: Array<{ id: ResearchSubTab; label: string; icon: React.ComponentType<any> }> = [
-  { id: 'explainability', label: 'Explainability Studio', icon: Layers },
-  { id: 'signal_explorer', label: 'Signal Explorer', icon: Waves },
-  { id: 'model_comparison', label: 'Model Comparison', icon: GitCompare },
-  { id: 'faithfulness', label: 'Faithfulness Lab', icon: ShieldCheck },
-  { id: 'robustness', label: 'Robustness Lab', icon: Sliders },
-  { id: 'modellab', label: 'Model Lab', icon: Cpu },
-  { id: 'research_analytics', label: 'Research Analytics', icon: LineChart },
+  { id: 'explainability', label: 'Why this result?', icon: Layers },
+  { id: 'signal_explorer', label: 'Signal Analysis', icon: Waves },
+  { id: 'model_comparison', label: 'Compare models', icon: GitCompare },
+  { id: 'faithfulness', label: 'Explanation testing', icon: ShieldCheck },
+  { id: 'robustness', label: 'Robustness tests', icon: Sliders },
+  { id: 'modellab', label: 'Model Performance', icon: Cpu },
+  { id: 'research_analytics', label: 'Benchmark Analytics', icon: LineChart },
 ]
 
 export const ResearchLabView: React.FC = () => {
