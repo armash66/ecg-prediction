@@ -1,0 +1,149 @@
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(HERE, ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+import pytest
+import numpy as np
+from fastapi.testclient import TestClient
+from server.server import app
+from ecg_intelligence import CLASSES, LEADS
+
+client = TestClient(app)
+
+
+def test_api_health():
+    res = client.get("/api/health")
+    assert res.status_code == 200
+    data = res.json()
+    assert "status" in data
+    assert data["status"] in ("healthy", "degraded")
+    assert "active_model" in data
+    assert data["sampling_rate"] == 100
+    assert data["classes"] == CLASSES
+    assert data["leads"] == LEADS
+
+
+def test_api_models():
+    res = client.get("/api/models")
+    assert res.status_code == 200
+    data = res.json()
+    assert "active_model" in data
+    assert "models" in data
+    models = {m["id"]: m for m in data["models"]}
+    assert "seq" in models
+    assert "cnn" in models
+    assert "gated" in models
+    assert models["seq"]["inference_ready"] is True
+    assert models["xgb"]["inference_ready"] is False
+
+
+def test_api_metrics():
+    res = client.get("/api/metrics")
+    assert res.status_code == 200
+    data = res.json()
+    assert "research_summary" in data
+    assert data["research_summary"]["labelled_records"] == 21388
+    assert "comparison" in data
+    assert len(data["comparison"]) > 0
+
+
+def test_api_samples():
+    res = client.get("/api/samples")
+    assert res.status_code == 200
+    data = res.json()
+    assert "total" in data
+    assert "samples" in data
+    assert data["total"] > 0
+
+    res_sample = client.get("/api/sample/0")
+    assert res_sample.status_code == 200
+    sample_data = res_sample.json()
+    assert len(sample_data["signal"]) == 1000
+    assert len(sample_data["signal"][0]) == 12
+    assert "labels" in sample_data
+
+
+def test_api_validate_json():
+    dummy = np.random.randn(1000, 12).tolist()
+    res = client.post("/api/ecg/validate", json={"signal": dummy})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["valid"] is True
+    assert data["metadata"]["n_leads"] == 12
+    assert data["metadata"]["n_samples"] == 1000
+
+
+def test_api_validate_invalid_shape():
+    dummy_bad = np.random.randn(1000, 8).tolist()
+    res = client.post("/api/ecg/validate", json={"signal": dummy_bad})
+    assert res.status_code == 400
+    assert res.json()["valid"] is False
+
+
+def test_api_analyze():
+    dummy = np.random.randn(1000, 12).tolist()
+    res = client.post("/api/ecg/analyze", json={"signal": dummy, "model": "seq"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["model"] == "seq"
+    assert "probabilities" in data
+    assert len(data["probabilities"]) == 5
+    for c in CLASSES:
+        assert c in data["probabilities"]
+        assert 0.0 <= data["probabilities"][c] <= 1.0
+    assert "predictions" in data
+    assert len(data["predictions"]) == 5
+    assert "latency_ms" in data
+    assert "disclaimer" in data
+
+
+def test_api_explain():
+    dummy = np.random.randn(1000, 12).tolist()
+    res = client.post("/api/explain", json={"signal": dummy, "model": "seq", "target_class": "MI", "steps": 10})
+    assert res.status_code == 200
+    data = res.json()
+    assert "attribution" in data
+    assert len(data["attribution"]) == 12
+    assert len(data["attribution"][0]) == 1000
+    assert "lead_importance" in data
+    assert len(data["lead_importance"]) == 12
+
+
+def test_api_faithfulness():
+    dummy = np.random.randn(1000, 12).tolist()
+    res = client.post("/api/explain/faithfulness", json={"signal": dummy, "model": "seq", "target_class": "MI", "top_fraction": 0.10})
+    assert res.status_code == 200
+    data = res.json()
+    assert "top_ig_prob_drop" in data
+    assert "random_prob_drop" in data
+    assert "ratio_drop" in data
+
+
+def test_api_lead_ablation():
+    dummy = np.random.randn(1000, 12).tolist()
+    res = client.post("/api/explain/lead_ablation", json={"signal": dummy, "model": "seq", "target_class": "MI"})
+    assert res.status_code == 200
+    data = res.json()
+    assert "leads" in data
+    assert len(data["leads"]) == 12
+    assert "delta_p" in data["leads"][0]
+    assert "impact_pct" in data["leads"][0]
+
+
+def test_api_select_model():
+    res = client.post("/api/models/select", json={"model": "gated"})
+    assert res.status_code == 200
+    assert res.json()["active_model"] == "gated"
+
+    # Reset back to seq
+    client.post("/api/models/select", json={"model": "seq"})
+
+
+def test_serve_frontend():
+    res = client.get("/")
+    assert res.status_code == 200
+    assert "root" in res.text

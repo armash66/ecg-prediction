@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Datasets & Caches (Keep large data, cache, and checkpoints out of git)
+1.0.3/
+data/
+data/ptbxl/
+data/*.csv
+data/records*
+reference/
+cache/
+artifacts/cache/
+checkpoints/
+*.npy
+*.npz
+*.pt
+*.bin
+*.pkl
+
+# Artifacts & Outputs
+artifacts/checkpoints/*
+artifacts/logs/*
+!artifacts/.gitkeep
+!artifacts/metrics/.gitkeep
+!artifacts/figures/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db

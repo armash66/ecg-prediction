@@ -1,0 +1,16 @@
+# Data Configuration
+# PTBXL_ROOT environment variable overrides root_path if set.
+# Default for Colab: /content/drive/MyDrive/ptb-xl/1.0.3 (or local copy /content/data/ptbxl)
+root_path: "data/ptbxl"
+cache_path: "artifacts/cache"
+sampling_rate: 100
+duration_sec: 10
+expected_shape: [1000, 12]
+lead_order: ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+diagnostic_classes: ["CD", "HYP", "MI", "NORM", "STTC"]
+folds:
+  train: [1, 2, 3, 4, 5, 6, 7, 8]
+  val: [9]
+  test: [10]
+n_jobs: 16
+

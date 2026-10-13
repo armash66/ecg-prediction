@@ -1,0 +1,13 @@
+# Training Hyperparameters
+seed: 42
+batch_size: 128
+epochs: 30
+learning_rate: 2.0e-3
+max_lr: 3.0e-3
+weight_decay: 1.0e-2
+optimizer: "AdamW"
+scheduler: "OneCycleLR"
+pos_weight_max_clamp: 5.0
+checkpoint_metric: "val_macro_auc"
+mode_direction: "max"
+batch_predict_size: 512

@@ -1,0 +1,39 @@
+# Model Architectures Configuration
+resnet1d:
+  in_channels: 12
+  stem_channels: 32
+  stem_kernel: 15
+  stem_stride: 2
+  blocks:
+    - {in_channels: 32, out_channels: 64, kernel_size: 7, stride: 2}
+    - {in_channels: 64, out_channels: 128, kernel_size: 7, stride: 2}
+    - {in_channels: 128, out_channels: 128, kernel_size: 7, stride: 2}
+
+sequence:
+  gru_hidden: 64
+  bidirectional: true
+  attention_dim: 128
+
+feature_mlp:
+  input_dim: 139
+  hidden_dims: [128, 64]
+  dropout: 0.3
+
+gated_fusion:
+  deep_dim: 128
+  feature_dim: 64
+  projected_dim: 96
+
+head:
+  dropout: 0.3
+  hidden_dim: 64
+  num_classes: 5
+
+xgboost:
+  n_estimators: 400
+  max_depth: 6
+  learning_rate: 0.05
+  subsample: 0.8
+  colsample_bytree: 0.8
+  tree_method: "hist"
+  n_jobs: -1

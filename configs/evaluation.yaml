@@ -1,0 +1,22 @@
+# Evaluation and Interpretability Configuration
+threshold_search:
+  start: 0.05
+  stop: 0.95
+  num_steps: 19
+  target_metric: "f1"
+  tuned_on_fold: 9
+  reported_on_fold: 10
+
+ensemble:
+  deep_weight: 0.6
+  xgb_weight: 0.4
+
+explainability:
+  integrated_gradients:
+    steps: 40
+    cudnn_enabled: false
+  deletion_test:
+    target_class: "MI"
+    top_fraction: 0.10
+    num_samples: 100
+    baseline: 0.0 # corresponds to zero after mean-centering normalisation

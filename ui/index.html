@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ECG Intelligence</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">ecg<span>.</span>intelligence</div>
+  <nav>
+    <button class="tab on" data-tab="analyse">Analyse</button>
+    <button class="tab" data-tab="model">Model</button>
+  </nav>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<main>
+  <section id="analyse">
+    <div class="card">
+      <div class="bar">
+        <div class="drop" id="drop" tabindex="0">
+          <input type="file" id="file" accept=".npy,.csv" hidden>
+          <span>Drop a 12-lead ECG (.npy / .csv) or <u>browse</u></span>
+        </div>
+        <div class="samples">
+          <label for="sample">Test sample <b id="sampleNo">0</b></label>
+          <input type="range" id="sample" min="0" max="0" value="0">
+          <button id="loadSample" class="ghost">Load</button>
+        </div>
+      </div>
+      <div class="leads" id="leads"></div>
+      <div class="wave"><canvas id="wave"></canvas><div id="tip" class="tip" hidden></div></div>
+      <div class="legend"><i class="sw ink"></i>signal<i class="sw heat"></i>model attention (integrated gradients)</div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Predictions</h2>
+        <div id="preds" class="empty">Load an ECG to begin.</div>
+        <div id="truth" class="muted"></div>
+      </div>
+      <div class="card">
+        <h2>Explanation</h2>
+        <div id="chips" class="chips"></div>
+        <div id="explainText" class="empty">Attributions appear here.</div>
+        <div id="gate"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="model" hidden>
+    <div class="card">
+      <h2>Experiments</h2>
+      <div id="expTable" class="empty">Not connected.</div>
+    </div>
+    <div class="card">
+      <h2>Per-class results</h2>
+      <div id="classTable" class="empty">Not connected.</div>
+    </div>
+  </section>
+</main>
+
+<footer>Research prototype for a student project. Not a medical device &mdash; not for diagnosis.</footer>
+<script src="app.js"></script>
+</body>
+</html>

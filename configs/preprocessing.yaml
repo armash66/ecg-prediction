@@ -1,0 +1,17 @@
+# Preprocessing and Feature Extraction Configuration
+filter:
+  lead_ii_rhythm_band: [5.0, 15.0]
+  butter_order: 2
+wavelet:
+  wavelet_name: "db4"
+  decomposition_level: 4
+hrv:
+  min_rr_samples_distance: 25 # 0.25s * 100Hz
+  peak_height_ratio: 0.3
+  min_peaks_required: 2
+augmentation:
+  max_roll_samples: 50 # random cyclic roll between [-50, 50]
+  noise_std: 0.03
+normalization:
+  computed_on_train_only: true
+  epsilon: 1.0e-6
