@@ -231,3 +231,168 @@ def test_longitudinal_comparison():
     assert "study_b" in comp
     assert "delta_probabilities" in comp
     assert comp["compatible"] is True  # Both use seq model
+
+
+def test_dob_and_age_rules_and_boundary_logic():
+    from datetime import date
+    from server.clinical_db import calculate_age_from_dob, validate_and_resolve_dob_and_age
+
+    # 1. Exact calendar birthday arithmetic
+    ref = date(2026, 10, 14)
+    # Birthday has occurred this year (born Oct 10 1990) -> age 36
+    assert calculate_age_from_dob("1990-10-10", ref_date=ref) == 36
+    # Birthday has NOT occurred yet this year (born Oct 20 1990) -> age 35
+    assert calculate_age_from_dob("1990-10-20", ref_date=ref) == 35
+    # Birthday is today (born Oct 14 1990) -> age 36
+    assert calculate_age_from_dob("1990-10-14", ref_date=ref) == 36
+    # Leap year birthday (Feb 29, 2000) evaluated on Feb 28, 2024 -> age 23; on Feb 29, 2024 -> age 24
+    assert calculate_age_from_dob("2000-02-29", ref_date=date(2024, 2, 28)) == 23
+    assert calculate_age_from_dob("2000-02-29", ref_date=date(2024, 2, 29)) == 24
+
+    # 2. Reject future DOB
+    with pytest.raises(ValueError, match="future"):
+        validate_and_resolve_dob_and_age("2030-01-01", None, ref_date=ref)
+
+    # 3. Reject unreasonable ages (> 130 or < 0)
+    with pytest.raises(ValueError, match="unreasonable"):
+        validate_and_resolve_dob_and_age("1850-01-01", None, ref_date=ref)
+    with pytest.raises(ValueError, match="unreasonable"):
+        validate_and_resolve_dob_and_age("", 145, ref_date=ref)
+    with pytest.raises(ValueError, match="unreasonable"):
+        validate_and_resolve_dob_and_age("", -5, ref_date=ref)
+
+    # 4. Age-only entry stores DOB as empty string (unknown), never invents a fake DOB
+    dob_out, age_out = validate_and_resolve_dob_and_age("", 42, ref_date=ref)
+    assert dob_out == ""
+    assert age_out == 42
+
+    # 5. API validation for future DOB
+    res_fut = client.post("/api/patients", json={"name": "Time Traveler", "dob": "2099-12-31"})
+    assert res_fut.status_code == 400
+    assert "future" in res_fut.json()["detail"].lower()
+
+    # 6. API validation for unreasonable age
+    res_old = client.post("/api/patients", json={"name": "Ancient One", "age": 150})
+    assert res_old.status_code == 400
+    assert "unreasonable" in res_old.json()["detail"].lower()
+
+    # 7. DOB entry via API overrides client-provided age with derived age
+    res_valid = client.post("/api/patients", json={"name": "DOB Source of Truth", "dob": "1990-05-15", "age": 99})
+    assert res_valid.status_code == 200
+    p_data = res_valid.json()
+    assert p_data["dob"] == "1990-05-15"
+    assert p_data["age"] == 36  # Correctly derived, 99 was overridden
+
+    # 8. Dynamic recalculation on fetch
+    get_res = client.get(f"/api/patients/{p_data['id']}")
+    assert get_res.status_code == 200
+    assert get_res.json()["age"] == 36
+
+
+def test_new_patient_with_ecg_intake_end_to_end():
+    # 1. Invalid signal rejection (wrong lead count)
+    bad_sig = np.zeros((1000, 5)).tolist()
+    bad_res = client.post("/api/patients", json={
+        "name": "Invalid ECG Leads Patient",
+        "dob": "1985-04-12",
+        "ecg_signal": bad_sig
+    })
+    assert bad_res.status_code == 400
+    assert "lead" in bad_res.json()["detail"].lower() or "shape" in bad_res.json()["detail"].lower()
+
+    # 2. Valid atomic intake with genuine 1000x12 ECG signal
+    valid_sig = (0.2 * np.sin(np.linspace(0, 20 * np.pi, 1000))[:, None] * np.ones((1, 12))).tolist()
+    reg_res = client.post("/api/patients", json={
+        "name": "Atomic Intake Patient",
+        "dob": "1982-11-03",
+        "sex": "Male",
+        "clinical_history": "Palpitations during exercise",
+        "ecg_signal": valid_sig,
+        "ecg_filename": "patient_clinic_intake.csv"
+    })
+    assert reg_res.status_code == 200
+    data = reg_res.json()
+    assert data["name"] == "Atomic Intake Patient"
+    assert "created_study_id" in data
+    study_id = data["created_study_id"]
+    assert study_id is not None
+
+    # Verify study is linked to this exact patient and has real model scores
+    study_res = client.get(f"/api/studies/{study_id}")
+    assert study_res.status_code == 200
+    study = study_res.json()
+    assert study["patient_id"] == data["id"]
+    assert study["selected_model"] == "seq"
+    assert all(c in study["probabilities"] for c in CLASSES)
+    assert study["quality_status"] in ("optimal", "acceptable_with_warnings")
+
+
+def test_ptbxl_dataset_test_bench_and_held_out_evaluation():
+    # 1. Dataset Info
+    info_res = client.get("/api/dataset/ptbxl/info")
+    assert info_res.status_code == 200
+    info = info_res.json()
+    assert info["installed"] is True
+    assert info["held_out_test_fold"] == 10
+    assert info["held_out_test_records"] == 2158
+    assert info["sampling_rate"] == 100
+    assert info["signal_shape"] == [1000, 12]
+
+    # 2. Query Fold 10 Records
+    rec_res = client.get("/api/dataset/ptbxl/records?fold=10&limit=5")
+    assert rec_res.status_code == 200
+    recs_data = rec_res.json()
+    assert recs_data["total"] == 2158
+    assert len(recs_data["records"]) == 5
+    first_rec = recs_data["records"][0]
+    ecg_id = first_rec["ecg_id"]
+    assert first_rec["is_held_out_test"] is True
+
+    # 3. Retrieve Single Record Waveform
+    single_res = client.get(f"/api/dataset/ptbxl/record/{ecg_id}")
+    assert single_res.status_code == 200
+    single = single_res.json()
+    assert single["ecg_id"] == ecg_id
+    assert len(single["signal"]) == 1000
+    assert len(single["signal"][0]) == 12
+    assert "quality_status" in single
+    assert "multilabel_targets" in single
+
+    # 4. Held-out Fold 10 Benchmark Evaluation
+    eval_res = client.get("/api/dataset/ptbxl/evaluation?model=seq")
+    assert eval_res.status_code == 200
+    ev = eval_res.json()
+    assert ev["held_out_verified"] is True
+    assert ev["records_evaluated"] == 2158
+    assert ev["macro_auroc"] >= 0.90
+    for c in CLASSES:
+        assert c in ev["per_class"]
+        assert ev["per_class"][c]["confusion"]["total"] == 2158
+
+    # 5. Run Live Model Inference and Class-Specific Explanation on Real Record
+    anl_res = client.post("/api/dataset/ptbxl/analyze", json={
+        "record_id": ecg_id,
+        "model": "seq",
+        "explain_class": "NORM",
+        "explain_steps": 15
+    })
+    assert anl_res.status_code == 200
+    anl = anl_res.json()
+    assert anl["record_id"] == ecg_id
+    assert anl["explained_class"] == "NORM"
+    assert len(anl["five_class_results"]) == 5
+    # Exact 5-class contract order
+    assert [r["class"] for r in anl["five_class_results"]] == CLASSES
+    for r in anl["five_class_results"]:
+        assert "score" in r
+        assert "threshold" in r
+        assert "predicted_positive" in r
+        assert "reference_label" in r
+        assert r["concordance"] in ("TP", "TN", "FP", "FN")
+    assert anl["attribution"] is not None
+    assert len(anl["attribution"]) == 12
+    assert len(anl["attribution"][0]) == 1000
+    assert anl["lead_importance"] is not None
+    assert len(anl["lead_importance"]) == 12
+    assert "attribution notice" in anl["plain_language_explanation"].lower()
+

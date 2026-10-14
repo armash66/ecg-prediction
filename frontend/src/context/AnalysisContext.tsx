@@ -41,6 +41,8 @@ import {
   fetchClassTimeMatrix,
   fetchFullLeadAblationMatrix,
   fetchAnalysisDetail,
+  validateSignalFile,
+  createStudy,
 } from '../api'
 
 interface AnalysisContextType {
@@ -87,6 +89,14 @@ interface AnalysisContextType {
   batchMatrixResult: BatchExplainMatrixResponse | null
   classTimeMatrixResult: ClassTimeMatrixResponse | null
   fullAblationMatrixResult: LeadAblationMatrixResponse | null
+
+  // Upload & Testing State
+  isUploading: boolean
+  uploadError: string | null
+  isTemporaryAnalysis: boolean
+  uploadAndValidateFile: (file: File, datFile?: File) => Promise<ValidationResponse | null>
+  clearUploadedSignal: () => void
+  saveTemporaryToPatient: (patientId: string, assignedClinician?: string) => Promise<ECGStudy | null>
 
   // Loading States
   isAnalyzing: boolean
@@ -149,6 +159,12 @@ export const AnalysisProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [isExplaining, setIsExplaining] = useState<boolean>(false)
   const [isExperimenting, setIsExperimenting] = useState<boolean>(false)
 
+  // File Upload & Testing State
+  const [isUploading, setIsUploading] = useState<boolean>(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [isTemporaryAnalysis, setIsTemporaryAnalysis] = useState<boolean>(false)
+  const uploadRequestCounterRef = React.useRef<number>(0)
+
   // Initialize System
   useEffect(() => {
     const initSystem = async () => {
@@ -170,34 +186,6 @@ export const AnalysisProvider: React.FC<{ children: ReactNode }> = ({ children }
         }
         if (mets) setMetrics(mets)
         if (samp?.samples) setSamples(samp.samples)
-
-        // Load default first sample for seamless inspection
-        const firstSamp = await fetchSampleDetail(0).catch(() => null)
-        if (firstSamp?.signal) {
-          setCurrentSignal(firstSamp.signal)
-          setCurrentMetadata({
-            format: 'Preloaded PTB-XL Sample',
-            filename: `PTB-XL Record #0 (${firstSamp.labels.join(', ')})`,
-            original_samples: 1000,
-            n_samples: 1000,
-            n_leads: 12,
-            leads: firstSamp.leads,
-            resampled: false,
-            duration_sec: firstSamp.duration_sec,
-            sampling_rate: firstSamp.sampling_rate,
-            units: firstSamp.units,
-            min_val: -1.5,
-            max_val: 2.2,
-            mean_val: 0.0,
-            std_val: 0.35,
-            validation_status: 'valid',
-            quality_status: 'optimal',
-            quality_score: 98.5,
-          })
-          if (firstSamp.labels?.length > 0) {
-            setSelectedClass(firstSamp.labels[0])
-          }
-        }
       } catch (e) {
         console.error('System init notice:', e)
       }
@@ -505,6 +493,111 @@ export const AnalysisProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   }
 
+  // Upload & Testing Actions
+  const uploadAndValidateFile = async (file: File, datFile?: File): Promise<ValidationResponse | null> => {
+    const requestId = ++uploadRequestCounterRef.current
+    setIsUploading(true)
+    setUploadError(null)
+
+    // Clear dependent downstream results immediately so stale outputs are never shown
+    setAnalysisResult(null)
+    setAttributionResult(null)
+    setFaithfulnessResult(null)
+    setLeadAblationResult(null)
+    setRobustnessResult(null)
+    setComparisonResult(null)
+    setSpectrogramResult(null)
+    setMorphologyResult(null)
+    setBatchMatrixResult(null)
+    setClassTimeMatrixResult(null)
+    setFullAblationMatrixResult(null)
+
+    try {
+      const resp = await validateSignalFile(file, datFile)
+
+      // Prevent race conditions: discard result if a newer upload was started
+      if (requestId !== uploadRequestCounterRef.current) {
+        return null
+      }
+
+      setValidationResult(resp)
+
+      if (!resp.valid || !resp.signal) {
+        const errMsg = resp.error || 'Signal validation failed. Please check file format.'
+        setUploadError(errMsg)
+        return resp
+      }
+
+      // Valid ECG signal received from backend
+      setCurrentSignal(resp.signal)
+      setCurrentMetadata(resp.metadata || null)
+      setIsTemporaryAnalysis(true)
+      setSelectedStudy(null)
+      setSelectedStudyId(null)
+      return resp
+    } catch (err: any) {
+      if (requestId !== uploadRequestCounterRef.current) {
+        return null
+      }
+      const msg = err?.message || 'Network error while validating ECG file.'
+      setUploadError(msg)
+      setValidationResult({
+        valid: false,
+        error: msg,
+      })
+      return null
+    } finally {
+      if (requestId === uploadRequestCounterRef.current) {
+        setIsUploading(false)
+      }
+    }
+  }
+
+  const clearUploadedSignal = () => {
+    uploadRequestCounterRef.current++
+    setCurrentSignal(null)
+    setCurrentMetadata(null)
+    setValidationResult(null)
+    setAnalysisResult(null)
+    setAttributionResult(null)
+    setFaithfulnessResult(null)
+    setLeadAblationResult(null)
+    setRobustnessResult(null)
+    setComparisonResult(null)
+    setSpectrogramResult(null)
+    setMorphologyResult(null)
+    setBatchMatrixResult(null)
+    setClassTimeMatrixResult(null)
+    setFullAblationMatrixResult(null)
+    setUploadError(null)
+    setIsUploading(false)
+    setIsTemporaryAnalysis(false)
+    setSelectedStudy(null)
+    setSelectedStudyId(null)
+  }
+
+  const saveTemporaryToPatient = async (patientId: string, assignedClinician: string = 'Attending Clinician'): Promise<ECGStudy | null> => {
+    if (!currentSignal) return null
+    try {
+      const filename = currentMetadata?.filename || 'uploaded_ecg.csv'
+      const newStudy = await createStudy({
+        patient_id: patientId,
+        signal: currentSignal,
+        filename: filename,
+        assigned_clinician: assignedClinician,
+        metadata: currentMetadata,
+      })
+      setSelectedStudy(newStudy)
+      setSelectedStudyId(newStudy.id)
+      setSelectedPatientId(patientId)
+      setIsTemporaryAnalysis(false)
+      return newStudy
+    } catch (err: any) {
+      console.error('Failed to save study to patient record:', err)
+      throw err
+    }
+  }
+
   const openStudyForReview = async (studyId: string, patientId?: string) => {
     try {
       setSelectedStudyId(studyId)
@@ -519,6 +612,7 @@ export const AnalysisProvider: React.FC<{ children: ReactNode }> = ({ children }
       if (detail.selected_model) {
         setActiveModel(detail.selected_model)
       }
+      setIsTemporaryAnalysis(false)
       setCurrentTab('ecg_review')
     } catch (e) {
       console.error('Failed to open study for review:', e)
@@ -563,6 +657,12 @@ export const AnalysisProvider: React.FC<{ children: ReactNode }> = ({ children }
         batchMatrixResult,
         classTimeMatrixResult,
         fullAblationMatrixResult,
+        isUploading,
+        uploadError,
+        isTemporaryAnalysis,
+        uploadAndValidateFile,
+        clearUploadedSignal,
+        saveTemporaryToPatient,
         isAnalyzing,
         isExplaining,
         isExperimenting,

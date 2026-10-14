@@ -28,6 +28,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(HERE, ".."))
 SRC_DIR = os.path.join(PROJECT_ROOT, "src")
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 import scipy.signal
 
@@ -46,27 +48,50 @@ from ecg_intelligence.explainability.deletion_test import compute_faithfulness_c
 from ecg_intelligence.features.extractor import extract_handcrafted_features
 from ecg_intelligence.preprocessing.resampling import ensure_1000x12
 from ecg_intelligence.data.parser import parse_csv_ecg, parse_numpy_ecg, parse_wfdb_record
-from server.clinical_db import (
-    init_clinical_db,
-    list_patients,
-    get_patient_detail,
-    create_patient,
-    update_patient,
-    delete_patient,
-    list_ecg_studies,
-    get_ecg_study_detail,
-    create_ecg_study,
-    update_study_status,
-    delete_ecg_study,
-    update_study_analysis_result,
-    get_study_notes,
-    save_study_notes,
-    generate_deterministic_ai_draft,
-    render_clinical_report_html,
-    finalize_study_report,
-    compare_longitudinal_studies,
-    get_clinical_overview,
-)
+try:
+    from server.clinical_db import (
+        init_clinical_db,
+        list_patients,
+        get_patient_detail,
+        create_patient,
+        update_patient,
+        delete_patient,
+        list_ecg_studies,
+        get_ecg_study_detail,
+        create_ecg_study,
+        update_study_status,
+        delete_ecg_study,
+        update_study_analysis_result,
+        get_study_notes,
+        save_study_notes,
+        generate_deterministic_ai_draft,
+        render_clinical_report_html,
+        finalize_study_report,
+        compare_longitudinal_studies,
+        get_clinical_overview,
+    )
+except ImportError:
+    from clinical_db import (
+        init_clinical_db,
+        list_patients,
+        get_patient_detail,
+        create_patient,
+        update_patient,
+        delete_patient,
+        list_ecg_studies,
+        get_ecg_study_detail,
+        create_ecg_study,
+        update_study_status,
+        delete_ecg_study,
+        update_study_analysis_result,
+        get_study_notes,
+        save_study_notes,
+        generate_deterministic_ai_draft,
+        render_clinical_report_html,
+        finalize_study_report,
+        compare_longitudinal_studies,
+        get_clinical_overview,
+    )
 
 app = FastAPI(
     title="PTB-XL ECG Intelligence API",
@@ -99,6 +124,7 @@ def resolve_cache_dir() -> str:
 CACHE_DIR = resolve_cache_dir()
 DIST_DIR = os.path.join(PROJECT_ROOT, "frontend", "dist")
 UI_DIR = os.path.join(PROJECT_ROOT, "ui")
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 
 # Global ML State
 _LOADED_MODELS: Dict[str, Any] = {}
@@ -111,6 +137,13 @@ _INFERENCE_COUNT = 0
 _LAST_INFERENCE_META: Optional[Dict[str, Any]] = None
 # Persistent History Database
 DB_PATH = os.path.join(CACHE_DIR, "analyses_history.db")
+
+try:
+    from server.dataset_bench import PTBXLDatasetBench
+except ImportError:
+    from dataset_bench import PTBXLDatasetBench
+DATASET_BENCH = PTBXLDatasetBench(os.path.join(PROJECT_ROOT, "data", "ptbxl"), CACHE_DIR)
+
 
 def init_history_db():
     try:
@@ -538,6 +571,26 @@ class PatientCreateRequest(BaseModel):
     medications: Optional[str] = ""
     notes: Optional[str] = ""
     status: Optional[str] = "active"
+    # Optional atomic ECG intake during new-patient registration
+    ecg_signal: Optional[List[List[float]]] = None
+    ecg_filename: Optional[str] = None
+    ecg_metadata: Optional[Dict[str, Any]] = None
+    assigned_clinician: Optional[str] = "Attending Clinician"
+
+
+class DatasetAnalyzeRequest(BaseModel):
+    record_id: Optional[Union[int, str]] = None
+    index: Optional[int] = None
+    model: Optional[str] = None
+    explain_class: Optional[str] = None
+    explain_steps: Optional[int] = 30
+
+
+class DatasetImportRequest(BaseModel):
+    record_id: Union[int, str]
+    clinician: Optional[str] = "Attending Clinician"
+    notes: Optional[str] = "Imported test benchmark record from PTB-XL v1.0.3"
+
 
 
 class PatientUpdateRequest(BaseModel):
@@ -791,10 +844,52 @@ def get_metrics():
     }
 
 
+_SAMPLE_METADATA_CACHE: Optional[Dict[int, Dict[str, Any]]] = None
+
+def get_sample_metadata(index: int) -> Dict[str, Any]:
+    global _SAMPLE_METADATA_CACHE
+    if _SAMPLE_METADATA_CACHE is None:
+        cache = {}
+        csv_path = os.path.join(DATA_DIR, "ptbxl", "ptbxl_database.csv")
+        fold_path = os.path.join(CACHE_DIR, "fold.npy")
+        scp_csv = os.path.join(DATA_DIR, "ptbxl", "scp_statements.csv")
+        if os.path.exists(csv_path) and os.path.exists(fold_path):
+            try:
+                import pandas as pd
+                import ast
+                df = pd.read_csv(csv_path, index_col="ecg_id")
+                df["scp_codes_dict"] = df["scp_codes"].apply(lambda x: ast.literal_eval(x) if isinstance(x, str) else {})
+                agg = pd.read_csv(scp_csv, index_col=0) if os.path.exists(scp_csv) else None
+                agg_diag = agg[agg.diagnostic == 1] if agg is not None else None
+                def sup(d):
+                    if agg_diag is None:
+                        return []
+                    return sorted({agg_diag.loc[k, "diagnostic_class"] for k in d if k in agg_diag.index})
+                df["sup"] = df["scp_codes_dict"].apply(sup)
+                df_filtered = df[df.sup.str.len() > 0]
+                fold = np.load(fold_path)
+                te_indices = np.where(fold == 10)[0][:40]
+                sample_rows = df_filtered.iloc[te_indices]
+                for idx, (ecg_id, row) in enumerate(sample_rows.iterrows()):
+                    cache[idx] = {
+                        "record_id": int(ecg_id),
+                        "patient_id": int(row.patient_id) if pd.notnull(row.patient_id) else None,
+                        "age": float(row.age) if pd.notnull(row.age) else None,
+                        "sex": "Female" if row.sex == 1 else ("Male" if row.sex == 0 else "Unknown"),
+                        "scp_codes": list(row.scp_codes_dict.keys()),
+                        "scp_details": row.scp_codes_dict,
+                    }
+            except Exception as e:
+                print(f"Warning: Failed to load detailed sample metadata: {e}")
+        _SAMPLE_METADATA_CACHE = cache
+    return _SAMPLE_METADATA_CACHE.get(index, {})
+
+
 @app.get("/api/samples")
 def list_samples():
     """
-    Returns catalogue of the 40 preloaded test-set records from samples.npz.
+    Returns catalogue of the 40 preloaded test-set records from samples.npz
+    enriched with verified PTB-XL record IDs and reference annotations.
     """
     samples_data = load_samples()
     if samples_data is None:
@@ -808,8 +903,14 @@ def list_samples():
         labels = []
         if Y is not None:
             labels = [CLASSES[idx] for idx, val in enumerate(Y[i]) if val == 1]
+        meta = get_sample_metadata(i)
         items.append({
             "index": i,
+            "record_id": meta.get("record_id"),
+            "patient_id": meta.get("patient_id"),
+            "age": meta.get("age"),
+            "sex": meta.get("sex"),
+            "scp_codes": meta.get("scp_codes", []),
             "leads": 12,
             "samples": 1000,
             "duration_sec": 10.0,
@@ -826,7 +927,7 @@ def list_samples():
 @app.get("/api/sample/{index}")
 def get_sample_by_index(index: int):
     """
-    Retrieves the raw signal array and genuine PTB-XL labels for sample i.
+    Retrieves the raw signal array, genuine PTB-XL labels, and verified record metadata for sample i.
     """
     samples_data = load_samples()
     if samples_data is None:
@@ -843,8 +944,16 @@ def get_sample_by_index(index: int):
     if Y is not None:
         labels = [CLASSES[idx] for idx, val in enumerate(Y[index]) if val == 1]
 
+    meta = get_sample_metadata(index)
+
     return {
         "index": index,
+        "record_id": meta.get("record_id"),
+        "patient_id": meta.get("patient_id"),
+        "age": meta.get("age"),
+        "sex": meta.get("sex"),
+        "scp_codes": meta.get("scp_codes", []),
+        "scp_details": meta.get("scp_details", {}),
         "signal": sig.tolist(),
         "labels": labels,
         "label_names": [CLASS_NAMES.get(l, l) for l in labels],
@@ -1057,8 +1166,8 @@ def analyze_ecg(req: AnalyzeRequest):
             "detected": bool(prob >= t),
         })
 
-    # Sort descending by probability
-    predictions.sort(key=lambda x: x["probability"], reverse=True)
+    # Note: Keep predictions array in exact CLASSES order ('CD', 'HYP', 'MI', 'NORM', 'STTC')
+    # to preserve API contract fidelity across frontend consumers and regression tests.
 
     # 6. Extract gate weights for gated fusion
     gate_val = None
@@ -2074,15 +2183,90 @@ def api_list_patients(
 def api_create_patient(req: PatientCreateRequest):
     """
     Registers a new patient with auto-generated PAT-2026-XXXX ID,
-    validates required fields, and prevents duplicate records.
+    validates required fields, enforces DOB/age source-of-truth rules,
+    and atomically handles optional ECG upload with real model inference.
     """
     try:
-        patient = create_patient(DB_PATH, _dump_model(req))
+        req_data = _dump_model(req)
+        raw_sig = None
+        sig = None
+        quality = None
+
+        if req.ecg_signal is not None:
+            raw_sig = np.array(req.ecg_signal, dtype=np.float32)
+            sig = ensure_1000x12(raw_sig)
+            if np.isnan(sig).any() or np.isinf(sig).any():
+                raise ValueError("Signal contains NaN or Inf values.")
+            quality = analyze_signal_quality(sig)
+
+        patient = create_patient(DB_PATH, req_data)
+
+        if sig is not None:
+            filename = req.ecg_filename or "registration_ecg.csv"
+            metadata = req.ecg_metadata or {
+                "format": "standard_12lead",
+                "leads": LEADS,
+                "sampling_rate": 100,
+                "duration_sec": 10.0,
+                "units": "mV",
+                "registration_intake": True,
+                "original_samples": raw_sig.shape[0] if raw_sig is not None else 1000
+            }
+
+            study = create_ecg_study(
+                db_path=DB_PATH,
+                patient_id_or_uid=patient["id"],
+                signal_arr=sig,
+                metadata=metadata,
+                quality_analysis=quality,
+                encounter_id=None,
+                filename=filename,
+                assigned_clinician=req.assigned_clinician or "Attending Clinician"
+            )
+
+            # Real model inference
+            model_name = _ACTIVE_MODEL
+            net = get_model(model_name)
+            ns = load_norm_stats()
+            thresholds = get_thresholds_for_model(model_name)
+
+            x_norm = ((sig - ns["mu"]) / ns["sd"]).T[None].astype(np.float32)
+            x_tensor = torch.from_numpy(x_norm)
+            f_tensor = None
+            meta = MODEL_METADATA.get(model_name, {})
+            if meta.get("arch_mode") in ("hybrid", "gated", "feat"):
+                feat = extract_handcrafted_features(sig)
+                f_norm = ((feat - ns["fm"]) / ns["fs"])[None].astype(np.float32)
+                f_tensor = torch.from_numpy(f_norm)
+
+            with torch.no_grad():
+                logits = net(x_tensor, f_tensor)
+                probs_arr = torch.sigmoid(logits)[0].numpy()
+
+            probs_dict = {c: float(probs_arr[i]) for i, c in enumerate(CLASSES)}
+            flags = [c for c in CLASSES if probs_dict[c] >= thresholds.get(c, 0.5)]
+
+            analysis_id = f"ANL-{int(time.time())}-{uuid.uuid4().hex[:6]}"
+            update_study_analysis_result(
+                db_path=DB_PATH,
+                study_id_or_uid=study["id"],
+                model_name=model_name,
+                probs=probs_dict,
+                thresholds=thresholds,
+                flags=flags,
+                analysis_id=analysis_id
+            )
+
+            updated_study = get_ecg_study_detail(DB_PATH, study["id"])
+            patient["created_study_id"] = study["id"]
+            patient["study"] = updated_study
+
         return patient
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create patient: {str(e)}")
+
 
 
 @app.get("/api/patients/{patient_id}")
@@ -2410,8 +2594,221 @@ def api_compare_longitudinal(study_a: str, study_b: str):
 
 
 # ==========================================
+# Real PTB-XL Dataset Browser & Test Bench
+# ==========================================
+
+@app.get("/api/dataset/ptbxl/info")
+def api_dataset_info():
+    """
+    Returns PTB-XL v1.0.3 dataset availability, configuration details,
+    held-out Fold 10 status, and diagnostic class distributions.
+    """
+    return DATASET_BENCH.get_dataset_info()
+
+
+@app.get("/api/dataset/ptbxl/records")
+def api_dataset_records(
+    fold: int = 10,
+    label: Optional[str] = None,
+    q: Optional[str] = None,
+    offset: int = 0,
+    limit: int = 30
+):
+    """
+    Lists real PTB-XL records filtered by patient-independent fold (default Fold 10 test set),
+    super-class label (CD, HYP, MI, NORM, STTC), or search query.
+    """
+    try:
+        if not DATASET_BENCH.is_configured():
+            raise HTTPException(
+                status_code=503,
+                detail="PTB-XL v1.0.3 dataset is not configured locally at 'data/ptbxl'."
+            )
+        return DATASET_BENCH.list_records(
+            fold=fold,
+            label=label,
+            search=q,
+            offset=offset,
+            limit=limit
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to query dataset records: {str(e)}")
+
+
+@app.get("/api/dataset/ptbxl/record/{record_id}")
+def api_dataset_record(record_id: str):
+    """
+    Retrieves the actual (1000, 12) 100 Hz waveform, SCP annotations,
+    and patient demographics for a genuine PTB-XL record without creating a patient.
+    """
+    try:
+        if not DATASET_BENCH.is_configured():
+            raise HTTPException(
+                status_code=503,
+                detail="PTB-XL v1.0.3 dataset is not configured locally at 'data/ptbxl'."
+            )
+        rec = DATASET_BENCH.get_record(record_id)
+        if not rec:
+            raise HTTPException(status_code=404, detail=f"PTB-XL record '{record_id}' not found.")
+        return rec
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load record '{record_id}': {str(e)}")
+
+
+@app.post("/api/dataset/ptbxl/analyze")
+def api_dataset_analyze(req: DatasetAnalyzeRequest):
+    """
+    Executes model inference on a real PTB-XL record using verified training preprocessing.
+    Returns 5-class predictions vs reference labels, decision thresholds, concordance status,
+    and on-demand Integrated Gradients attribution and plain-language explanation.
+    """
+    try:
+        if not DATASET_BENCH.is_configured():
+            raise HTTPException(
+                status_code=503,
+                detail="PTB-XL v1.0.3 dataset is not configured locally at 'data/ptbxl'."
+            )
+
+        identifier = req.record_id if req.record_id is not None else req.index
+        if identifier is None:
+            raise HTTPException(status_code=400, detail="Must provide 'record_id' or 'index'.")
+
+        model_name = req.model or _ACTIVE_MODEL
+        result = DATASET_BENCH.run_benchmark_analysis(
+            record_id_or_index=identifier,
+            model_name=model_name,
+            get_model_fn=get_model,
+            load_norm_stats_fn=load_norm_stats,
+            get_thresholds_fn=get_thresholds_for_model,
+            model_metadata_dict=MODEL_METADATA,
+            extract_handcrafted_fn=extract_handcrafted_features,
+            explain_class=req.explain_class,
+            explain_steps=req.explain_steps or 30
+        )
+        return result
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to analyze dataset record: {str(e)}")
+
+
+@app.get("/api/dataset/ptbxl/evaluation")
+def api_dataset_evaluation(model: Optional[str] = None):
+    """
+    Returns verified held-out evaluation summary for Fold 10 (2,158 records),
+    including macro/micro AUROC, AUPRC, F1, sensitivity, specificity, and confusion information.
+    """
+    try:
+        model_name = model or _ACTIVE_MODEL
+        return DATASET_BENCH.get_held_out_evaluation(model_name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load dataset evaluation: {str(e)}")
+
+
+@app.post("/api/dataset/ptbxl/import")
+def api_dataset_import_to_patient(req: DatasetImportRequest):
+    """
+    Explicitly imports a dataset test record as a clearly labelled test patient chart
+    linked to an authentic ECG study. Keeps test records clearly labelled.
+    """
+    try:
+        if not DATASET_BENCH.is_configured():
+            raise HTTPException(
+                status_code=503,
+                detail="PTB-XL v1.0.3 dataset is not configured locally."
+            )
+        rec = DATASET_BENCH.get_record(req.record_id)
+        if not rec:
+            raise HTTPException(status_code=404, detail=f"Record '{req.record_id}' not found.")
+
+        pat_name = f"PTB-XL Test Record #{rec['ecg_id']}"
+        notes = f"{req.notes or 'Imported benchmark record'}. SCP: {list(rec['scp_codes'].keys())}."
+        history = f"PTB-XL Benchmark Subject (Fold {rec['strat_fold']}). Reference classes: {', '.join(rec['reference_classes']) or 'NORM'}."
+
+        patient_data = {
+            "name": pat_name,
+            "dob": "",
+            "age": int(rec["age"]) if rec["age"] is not None else None,
+            "sex": rec["sex"],
+            "mrn": f"PTBXL-{rec['ecg_id']:05d}",
+            "contact": "PTB-XL v1.0.3 PhysioNet Research Cohort",
+            "clinical_history": history,
+            "notes": notes,
+            "status": "active"
+        }
+        patient = create_patient(DB_PATH, patient_data)
+
+        sig = np.array(rec["signal"], dtype=np.float32)
+        study = create_ecg_study(
+            db_path=DB_PATH,
+            patient_id_or_uid=patient["id"],
+            signal_arr=sig,
+            metadata={
+                "format": "ptbxl_100hz_waveform",
+                "leads": LEADS,
+                "sampling_rate": 100,
+                "duration_sec": 10.0,
+                "units": "mV",
+                "ptbxl_ecg_id": rec["ecg_id"],
+                "ptbxl_fold": rec["strat_fold"],
+                "is_held_out_test": rec["is_held_out_test"],
+                "reference_classes": rec["reference_classes"],
+                "scp_codes": rec["scp_codes"]
+            },
+            quality_analysis=rec["quality"],
+            encounter_id=None,
+            filename=f"ptbxl_record_{rec['ecg_id']}.csv",
+            assigned_clinician=req.clinician or "Attending Clinician"
+        )
+
+        active_model = _ACTIVE_MODEL
+        net = get_model(active_model)
+        ns = load_norm_stats()
+        thresholds = get_thresholds_for_model(active_model)
+
+        x_norm = ((sig - ns["mu"]) / ns["sd"]).T[None].astype(np.float32)
+        x_tensor = torch.from_numpy(x_norm)
+        f_tensor = None
+        meta = MODEL_METADATA.get(active_model, {})
+        if meta.get("arch_mode") in ("hybrid", "gated", "feat"):
+            feat = extract_handcrafted_features(sig)
+            f_norm = ((feat - ns["fm"]) / ns["fs"])[None].astype(np.float32)
+            f_tensor = torch.from_numpy(f_norm)
+
+        with torch.no_grad():
+            logits = net(x_tensor, f_tensor)
+            probs_arr = torch.sigmoid(logits)[0].numpy()
+
+        probs_dict = {c: float(probs_arr[i]) for i, c in enumerate(CLASSES)}
+        flags = [c for c in CLASSES if probs_dict[c] >= thresholds.get(c, 0.5)]
+
+        analysis_id = f"ANL-{int(time.time())}-{uuid.uuid4().hex[:6]}"
+        update_study_analysis_result(
+            db_path=DB_PATH,
+            study_id_or_uid=study["id"],
+            model_name=active_model,
+            probs=probs_dict,
+            thresholds=thresholds,
+            flags=flags,
+            analysis_id=analysis_id
+        )
+
+        updated_study = get_ecg_study_detail(DB_PATH, study["id"])
+        patient["created_study_id"] = study["id"]
+        patient["study"] = updated_study
+        return patient
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to import dataset record: {str(e)}")
+
+
+# ==========================================
 # Backward Compatibility Endpoints
 # ==========================================
+
 
 @app.get("/api/info")
 def get_info_compat():

@@ -8,9 +8,11 @@ import {
   Cpu,
   LineChart,
   FlaskConical,
+  Database,
 } from 'lucide-react'
 import { ResearchSubTab } from '../types'
 import { useAnalysis } from '../context/AnalysisContext'
+import { DatasetBenchView } from './DatasetBenchView'
 import { ExplainabilityView } from './ExplainabilityView'
 import { SignalExplorerView } from './SignalExplorerView'
 import { ModelComparisonView } from './ModelComparisonView'
@@ -20,6 +22,7 @@ import { ModelLabView } from './ModelLabView'
 import { ResearchAnalyticsView } from './ResearchAnalyticsView'
 
 const SUB_TABS: Array<{ id: ResearchSubTab; label: string; icon: React.ComponentType<any> }> = [
+  { id: 'dataset_bench', label: 'PTB-XL Test Bench', icon: Database },
   { id: 'explainability', label: 'Why this result?', icon: Layers },
   { id: 'signal_explorer', label: 'Signal Analysis', icon: Waves },
   { id: 'model_comparison', label: 'Compare models', icon: GitCompare },
@@ -89,6 +92,7 @@ export const ResearchLabView: React.FC = () => {
 
       {/* Sub-view Rendering */}
       <div>
+        {researchSubTab === 'dataset_bench' && <DatasetBenchView />}
         {researchSubTab === 'explainability' && <ExplainabilityView />}
         {researchSubTab === 'signal_explorer' && <SignalExplorerView />}
         {researchSubTab === 'model_comparison' && <ModelComparisonView />}

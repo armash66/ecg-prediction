@@ -11,14 +11,23 @@ import {
   LeadAblationResponse,
   DiagnosticClass,
   Patient,
+  PatientCreatePayload,
   ECGStudy,
   ClinicalNote,
   ClinicalReport,
   ClinicalOverviewData,
   LongitudinalComparisonResult,
+  PTBXLDatasetInfo,
+  PTBXLRecordSummary,
+  PTBXLRecordsResponse,
+  PTBXLRecordDetail,
+  FiveClassAnalysisItem,
+  PTBXLBenchmarkAnalysisResult,
+  PTBXLEvaluationSummary,
 } from './types'
 
 const BASE_URL = '' // Relative for same-origin or Vite proxy
+
 
 export async function fetchHealth(): Promise<BackendHealth> {
   const res = await fetch(`${BASE_URL}/api/health`)
@@ -364,7 +373,7 @@ export async function fetchPatientDetail(id: string): Promise<Patient> {
   return res.json()
 }
 
-export async function createPatient(data: Partial<Patient>): Promise<Patient> {
+export async function createPatient(data: PatientCreatePayload): Promise<Patient & { created_study_id?: string; study?: ECGStudy }> {
   const res = await fetch(`${BASE_URL}/api/patients`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -517,4 +526,103 @@ export async function fetchLongitudinalComparison(studyA: string, studyB: string
   }
   return res.json()
 }
+
+// ==========================================
+// PTB-XL Dataset Browser & Test Bench API
+// ==========================================
+
+export async function fetchPTBXLInfo(): Promise<PTBXLDatasetInfo> {
+  const res = await fetch(`${BASE_URL}/api/dataset/ptbxl/info`)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Failed to load dataset information')
+  }
+  return res.json()
+}
+
+export async function fetchPTBXLRecords(
+  fold: number = 10,
+  label?: string,
+  query?: string,
+  offset: number = 0,
+  limit: number = 30
+): Promise<PTBXLRecordsResponse> {
+  const params = new URLSearchParams()
+  params.append('fold', String(fold))
+  if (label && label !== 'ALL') params.append('label', label)
+  if (query && query.trim()) params.append('q', query.trim())
+  params.append('offset', String(offset))
+  params.append('limit', String(limit))
+
+  const res = await fetch(`${BASE_URL}/api/dataset/ptbxl/records?${params.toString()}`)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Failed to load dataset records')
+  }
+  return res.json()
+}
+
+export async function fetchPTBXLRecordDetail(recordId: string | number): Promise<PTBXLRecordDetail> {
+  const res = await fetch(`${BASE_URL}/api/dataset/ptbxl/record/${recordId}`)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || `Failed to load dataset record #${recordId}`)
+  }
+  return res.json()
+}
+
+export async function analyzePTBXLRecord(
+  recordId: string | number,
+  model?: string,
+  explainClass?: DiagnosticClass,
+  explainSteps: number = 30
+): Promise<PTBXLBenchmarkAnalysisResult> {
+  const res = await fetch(`${BASE_URL}/api/dataset/ptbxl/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      record_id: recordId,
+      model,
+      explain_class: explainClass,
+      explain_steps: explainSteps,
+    }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Failed to run model analysis on dataset record')
+  }
+  return res.json()
+}
+
+export async function fetchPTBXLEvaluation(model?: string): Promise<PTBXLEvaluationSummary> {
+  const url = model ? `${BASE_URL}/api/dataset/ptbxl/evaluation?model=${model}` : `${BASE_URL}/api/dataset/ptbxl/evaluation`
+  const res = await fetch(url)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Failed to fetch held-out dataset evaluation')
+  }
+  return res.json()
+}
+
+export async function importPTBXLRecordToPatient(
+  recordId: string | number,
+  clinician?: string,
+  notes?: string
+): Promise<Patient & { created_study_id?: string; study?: ECGStudy }> {
+  const res = await fetch(`${BASE_URL}/api/dataset/ptbxl/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      record_id: recordId,
+      clinician: clinician || 'Attending Clinician',
+      notes: notes || 'Imported benchmark record from PTB-XL v1.0.3',
+    }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Failed to import dataset record into patient chart')
+  }
+  return res.json()
+}
+
 

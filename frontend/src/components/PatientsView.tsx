@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import {
   Users,
   Search,
@@ -6,17 +6,19 @@ import {
   Edit2,
   Trash2,
   Activity,
-  Clock,
-  FileText,
   Calendar,
   AlertCircle,
   CheckCircle2,
-  ChevronRight,
   X,
   RefreshCw,
   Plus,
+  UploadCloud,
+  FileCheck,
+  AlertTriangle,
+  HeartPulse,
+  Info,
 } from 'lucide-react'
-import { Patient, ECGStudy, Encounter, ClinicalNote, ClinicalReport } from '../types'
+import { Patient, SignalMetadata } from '../types'
 import {
   fetchPatients,
   fetchPatientDetail,
@@ -24,14 +26,40 @@ import {
   updatePatient,
   deletePatient,
   createStudy,
+  validateSignalFile,
 } from '../api'
-import { useAnalysis } from '../context/AnalysisContext'
+import { ECGViewer } from './ECGViewer'
 
 interface PatientsViewProps {
   onOpenStudyForReview: (studyId: string, patientId?: string) => void
 }
 
 type PatientTab = 'summary' | 'history' | 'studies' | 'encounters' | 'notes' | 'reports'
+
+/**
+ * Calendar birthday calculation matching backend clinical_db.py rules.
+ * Correctly accounts for leap years, month boundaries, and current date.
+ */
+export const calculateAgeFromDob = (dobStr?: string | null): number | null => {
+  if (!dobStr || !/^\d{4}-\d{2}-\d{2}$/.test(dobStr.trim())) return null
+  const [yStr, mStr, dStr] = dobStr.trim().split('-')
+  const birthYear = parseInt(yStr, 10)
+  const birthMonth = parseInt(mStr, 10)
+  const birthDay = parseInt(dStr, 10)
+  if (isNaN(birthYear) || isNaN(birthMonth) || isNaN(birthDay)) return null
+  if (birthMonth < 1 || birthMonth > 12 || birthDay < 1 || birthDay > 31) return null
+
+  const now = new Date()
+  const currentYear = now.getFullYear()
+  const currentMonth = now.getMonth() + 1
+  const currentDay = now.getDate()
+
+  let age = currentYear - birthYear
+  if (currentMonth < birthMonth || (currentMonth === birthMonth && currentDay < birthDay)) {
+    age -= 1
+  }
+  return age
+}
 
 export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview }) => {
   const [patients, setPatients] = useState<Patient[]>([])
@@ -51,8 +79,9 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
   const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false)
   const [showAttachECGModal, setShowAttachECGModal] = useState<boolean>(false)
 
-  // Form states
+  // Demographics Form states
   const [formName, setFormName] = useState<string>('')
+  const [dobMode, setDobMode] = useState<'dob' | 'age_only'>('dob')
   const [formDob, setFormDob] = useState<string>('')
   const [formAge, setFormAge] = useState<string>('')
   const [formSex, setFormSex] = useState<string>('Male')
@@ -65,7 +94,21 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
   const [formError, setFormError] = useState<string | null>(null)
   const [formSubmitting, setFormSubmitting] = useState<boolean>(false)
 
-  // Attach ECG State
+  // Registration ECG Upload states
+  const [uploadedEcgFile, setUploadedEcgFile] = useState<File | null>(null)
+  const [uploadedDatFile, setUploadedDatFile] = useState<File | null>(null)
+  const [uploadedEcgSignal, setUploadedEcgSignal] = useState<number[][] | null>(null)
+  const [uploadedEcgMetadata, setUploadedEcgMetadata] = useState<SignalMetadata | null>(null)
+  const [ecgValidationStatus, setEcgValidationStatus] = useState<'idle' | 'validating' | 'valid' | 'error'>('idle')
+  const [ecgValidationError, setEcgValidationError] = useState<string | null>(null)
+  const [ecgDragActive, setEcgDragActive] = useState<boolean>(false)
+  const [selectedModel, setSelectedModel] = useState<string>('seq')
+  const [assignedClinician, setAssignedClinician] = useState<string>('Attending Clinician')
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const datFileInputRef = useRef<HTMLInputElement | null>(null)
+
+  // Attach ECG State (Existing Patient Chart)
   const [selectedSampleIdx, setSelectedSampleIdx] = useState<number>(0)
 
   const loadPatientsList = async () => {
@@ -97,33 +140,180 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
     }
   }
 
+  // Derived age calculated on the fly when formDob changes
+  const derivedAge = formDob ? calculateAgeFromDob(formDob) : null
+
+  // File handling for ECG Upload
+  const processSelectedFile = async (primaryFile: File, datFile?: File) => {
+    setEcgValidationStatus('validating')
+    setEcgValidationError(null)
+    setUploadedEcgFile(primaryFile)
+    if (datFile) setUploadedDatFile(datFile)
+
+    try {
+      const resp = await validateSignalFile(primaryFile, datFile)
+      if (resp.valid && resp.signal) {
+        setUploadedEcgSignal(resp.signal)
+        setUploadedEcgMetadata(resp.metadata || null)
+        setEcgValidationStatus('valid')
+        setEcgValidationError(null)
+      } else {
+        setUploadedEcgSignal(null)
+        setUploadedEcgMetadata(null)
+        setEcgValidationStatus('error')
+        setEcgValidationError(resp.error || 'Signal validation failed. Ensure shape is (1000, 12) across leads I-V6.')
+      }
+    } catch (err: any) {
+      setUploadedEcgSignal(null)
+      setUploadedEcgMetadata(null)
+      setEcgValidationStatus('error')
+      setEcgValidationError(err?.message || 'Error occurred while contacting backend validation service.')
+    }
+  }
+
+  const handleEcgDrop = async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setEcgDragActive(false)
+
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length === 0) return
+
+    const heaFile = files.find((f) => f.name.toLowerCase().endsWith('.hea'))
+    const datFile = files.find((f) => f.name.toLowerCase().endsWith('.dat'))
+
+    if (heaFile) {
+      if (datFile) {
+        await processSelectedFile(heaFile, datFile)
+      } else {
+        setUploadedEcgFile(heaFile)
+        setEcgValidationStatus('idle')
+        datFileInputRef.current?.click()
+      }
+      return
+    }
+
+    const primaryFile = files[0]
+    const ext = primaryFile.name.split('.').pop()?.toLowerCase() || ''
+    if (!['csv', 'npy', 'npz', 'hea', 'dat'].includes(ext)) {
+      setEcgValidationStatus('error')
+      setEcgValidationError(`Unsupported file format (.${ext}). Backend parses CSV, NPY, NPZ, and WFDB (.hea/.dat).`)
+      return
+    }
+
+    await processSelectedFile(primaryFile)
+  }
+
+  const handleEcgFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (file.name.toLowerCase().endsWith('.hea')) {
+      setUploadedEcgFile(file)
+      datFileInputRef.current?.click()
+      return
+    }
+
+    await processSelectedFile(file)
+  }
+
+  const handleDatFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const datFile = e.target.files?.[0]
+    if (!datFile || !uploadedEcgFile) return
+    await processSelectedFile(uploadedEcgFile, datFile)
+  }
+
+  const clearUploadedEcg = () => {
+    setUploadedEcgFile(null)
+    setUploadedDatFile(null)
+    setUploadedEcgSignal(null)
+    setUploadedEcgMetadata(null)
+    setEcgValidationStatus('idle')
+    setEcgValidationError(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+    if (datFileInputRef.current) datFileInputRef.current.value = ''
+  }
+
+  const validateForm = (): { valid: boolean; error?: string; age?: number; dob?: string } => {
+    if (!formName.trim()) {
+      return { valid: false, error: 'Patient full name is required.' }
+    }
+
+    if (dobMode === 'dob') {
+      if (!formDob.trim()) {
+        return { valid: false, error: 'Date of Birth is required when using DOB source of truth.' }
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(formDob.trim())) {
+        return { valid: false, error: 'Date of Birth must be in YYYY-MM-DD format.' }
+      }
+      const now = new Date()
+      const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+      if (formDob.trim() > todayIso) {
+        return { valid: false, error: 'Date of birth cannot be in the future.' }
+      }
+      const dAge = calculateAgeFromDob(formDob)
+      if (dAge === null || dAge < 0 || dAge > 130) {
+        return { valid: false, error: `Derived age (${dAge}) is outside plausible clinical range (0–130 years).` }
+      }
+      return { valid: true, age: dAge, dob: formDob.trim() }
+    } else {
+      // Age-only entry: DOB is explicitly unknown
+      if (!formAge.trim()) {
+        return { valid: false, error: 'Please enter patient age when Date of Birth is unknown.' }
+      }
+      const pAge = parseInt(formAge.trim(), 10)
+      if (isNaN(pAge) || pAge < 0 || pAge > 130) {
+        return { valid: false, error: 'Age must be an integer between 0 and 130 years.' }
+      }
+      return { valid: true, age: pAge, dob: '' }
+    }
+  }
+
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!formName.trim()) {
-      setFormError('Patient name is required.')
+    if (formSubmitting) return
+
+    const validation = validateForm()
+    if (!validation.valid) {
+      setFormError(validation.error || 'Form validation failed.')
       return
     }
 
     try {
       setFormSubmitting(true)
       setFormError(null)
-      const newPat = await createPatient({
+
+      const payload = {
         name: formName.trim(),
-        dob: formDob.trim(),
-        age: formAge ? parseInt(formAge, 10) : undefined,
+        dob: validation.dob,
+        age: validation.age,
         sex: formSex,
-        mrn: formMrn.trim(),
-        contact: formContact.trim(),
-        clinical_history: formHistory.trim(),
-        allergies: formAllergies.trim(),
-        medications: formMedications.trim(),
-        notes: formNotes.trim(),
+        mrn: formMrn.trim() || undefined,
+        contact: formContact.trim() || undefined,
+        clinical_history: formHistory.trim() || undefined,
+        allergies: formAllergies.trim() || 'NKDA',
+        medications: formMedications.trim() || undefined,
+        notes: formNotes.trim() || undefined,
         status: 'active',
-      })
+        // Optional atomic ECG intake
+        ecg_signal: uploadedEcgSignal || undefined,
+        ecg_filename: uploadedEcgFile?.name || undefined,
+        ecg_metadata: uploadedEcgMetadata || undefined,
+        assigned_clinician: assignedClinician || 'Attending Clinician',
+        selected_model: selectedModel || 'seq',
+      }
+
+      const newPat = await createPatient(payload)
       setShowRegisterModal(false)
       resetForm()
       await loadPatientsList()
-      setSelectedPatient(newPat)
+
+      // If an ECG was uploaded and processed atomically, open the review screen with that exact study!
+      if (newPat.created_study_id) {
+        onOpenStudyForReview(newPat.created_study_id, newPat.id)
+      } else {
+        setSelectedPatient(newPat)
+      }
     } catch (err: any) {
       setFormError(err?.message || 'Failed to register patient.')
     } finally {
@@ -133,15 +323,21 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
 
   const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!selectedPatient) return
+    if (!selectedPatient || formSubmitting) return
+
+    const validation = validateForm()
+    if (!validation.valid) {
+      setFormError(validation.error || 'Validation error.')
+      return
+    }
 
     try {
       setFormSubmitting(true)
       setFormError(null)
       const updated = await updatePatient(selectedPatient.id, {
         name: formName.trim(),
-        dob: formDob.trim(),
-        age: formAge ? parseInt(formAge, 10) : undefined,
+        dob: validation.dob,
+        age: validation.age,
         sex: formSex,
         mrn: formMrn.trim(),
         contact: formContact.trim(),
@@ -173,7 +369,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
   }
 
   const handleAttachECGSubmit = async () => {
-    if (!selectedPatient) return
+    if (!selectedPatient || formSubmitting) return
     try {
       setFormSubmitting(true)
       const newStudy = await createStudy({
@@ -194,8 +390,15 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
 
   const openEditModalForPatient = (p: Patient) => {
     setFormName(p.name)
-    setFormDob(p.dob || '')
-    setFormAge(p.age ? String(p.age) : '')
+    if (p.dob) {
+      setDobMode('dob')
+      setFormDob(p.dob)
+      setFormAge('')
+    } else {
+      setDobMode('age_only')
+      setFormDob('')
+      setFormAge(p.age ? String(p.age) : '')
+    }
     setFormSex(p.sex || 'Male')
     setFormMrn(p.mrn || '')
     setFormContact(p.contact || '')
@@ -209,6 +412,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
 
   const resetForm = () => {
     setFormName('')
+    setDobMode('dob')
     setFormDob('')
     setFormAge('')
     setFormSex('Male')
@@ -219,10 +423,11 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
     setFormMedications('')
     setFormNotes('')
     setFormError(null)
+    clearUploadedEcg()
   }
 
   return (
-    <div style={{ display: 'flex', gap: '24px', maxWidth: '1400px', margin: '0 auto', height: 'calc(100vh - 120px)' }}>
+    <div style={{ display: 'flex', gap: '24px', maxWidth: '1400px', margin: '0 auto', minHeight: 'calc(100vh - 120px)' }}>
       {/* Left Column: Patient Directory / List */}
       <div
         className="card"
@@ -247,7 +452,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
             }}
           >
             <UserPlus size={14} />
-            <span>New</span>
+            <span>New Patient</span>
           </button>
         </div>
 
@@ -306,6 +511,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
           ) : (
             patients.map((pat) => {
               const isSelected = selectedPatient?.id === pat.id
+              const verifiedAge = pat.dob ? calculateAgeFromDob(pat.dob) ?? pat.age : pat.age
               return (
                 <div
                   key={pat.id}
@@ -328,7 +534,22 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
                     </code>
                   </div>
                   <div style={{ fontSize: '12px', color: '#777773', marginTop: '4px' }}>
-                    {pat.age ? `${pat.age} yrs` : 'Age N/A'} \u2022 {pat.sex} {pat.mrn ? `\u2022 MRN: ${pat.mrn}` : ''}
+                    {pat.dob ? (
+                      <span>
+                        <b>{verifiedAge ?? 'N/A'} yrs</b>{' '}
+                        <span style={{ fontSize: '10px', color: '#34765A', background: '#E8F4EE', padding: '1px 4px', borderRadius: '3px' }}>
+                          DOB Verified
+                        </span>
+                      </span>
+                    ) : (
+                      <span>
+                        <b>{verifiedAge != null ? `${verifiedAge} yrs` : 'Age N/A'}</b>{' '}
+                        <span style={{ fontSize: '10px', color: '#777773', background: '#F0EEE9', padding: '1px 4px', borderRadius: '3px' }}>
+                          DOB Unknown
+                        </span>
+                      </span>
+                    )}{' '}
+                    \u2022 {pat.sex} {pat.mrn ? `\u2022 MRN: ${pat.mrn}` : ''}
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '11px', color: '#9C9C96' }}>
                     <span>{pat.study_count || 0} ECG studies</span>
@@ -380,10 +601,22 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
                     {selectedPatient.patient_id}
                   </code>
                 </div>
-                <div style={{ fontSize: '12px', color: '#777773', marginTop: '4px', display: 'flex', gap: '16px' }}>
-                  <span><b>Age:</b> {selectedPatient.age ?? 'N/A'} yrs</span>
+                <div style={{ fontSize: '12px', color: '#777773', marginTop: '4px', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                  <span>
+                    <b>Age:</b>{' '}
+                    {selectedPatient.dob ? (
+                      <span>
+                        {calculateAgeFromDob(selectedPatient.dob) ?? selectedPatient.age} yrs{' '}
+                        <span style={{ fontSize: '11px', color: '#34765A', fontWeight: 600 }}>(Recalculated from DOB)</span>
+                      </span>
+                    ) : (
+                      <span>{selectedPatient.age ?? 'N/A'} yrs (Age-only entry, DOB unknown)</span>
+                    )}
+                  </span>
                   <span><b>Sex:</b> {selectedPatient.sex}</span>
-                  {selectedPatient.dob && <span><b>DOB:</b> {selectedPatient.dob}</span>}
+                  <span>
+                    <b>DOB:</b> {selectedPatient.dob ? selectedPatient.dob : <span style={{ color: '#9C9C96' }}>Unknown</span>}
+                  </span>
                   {selectedPatient.mrn && <span><b>MRN:</b> {selectedPatient.mrn}</span>}
                 </div>
               </div>
@@ -671,11 +904,27 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
       {/* Patient Registration / Edit Modal */}
       {(showRegisterModal || showEditModal) && (
         <div className="modal-backdrop">
-          <div className="card modal-dialog" style={{ width: '600px', padding: '24px', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#252525', margin: 0 }}>
-                {showRegisterModal ? 'Register New Patient' : 'Edit Patient Chart'}
-              </h3>
+          <div
+            className="card modal-dialog"
+            style={{
+              width: '740px',
+              padding: '24px',
+              maxHeight: '92vh',
+              overflowY: 'auto',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.15)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#252525', margin: 0 }}>
+                  {showRegisterModal ? 'Register New Patient' : 'Edit Patient Chart'}
+                </h3>
+                <span style={{ fontSize: '12px', color: '#777773' }}>
+                  {showRegisterModal
+                    ? 'Enter patient demographics and optionally attach a 12-lead ECG for live analysis.'
+                    : `Updating chart demographics for ${selectedPatient?.patient_id}.`}
+                </span>
+              </div>
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={() => {
@@ -688,12 +937,30 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
             </div>
 
             {formError && (
-              <div style={{ padding: '10px 12px', borderRadius: '6px', background: '#FDEEEE', color: '#B33A3A', fontSize: '13px', marginBottom: '16px' }}>
-                {formError}
+              <div
+                style={{
+                  padding: '12px 14px',
+                  borderRadius: '6px',
+                  background: '#FDEEEE',
+                  color: '#B33A3A',
+                  fontSize: '13px',
+                  marginBottom: '16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  border: '1px solid #F5C6CB',
+                }}
+              >
+                <AlertCircle size={16} style={{ flexShrink: 0 }} />
+                <span>{formError}</span>
               </div>
             )}
 
-            <form onSubmit={showRegisterModal ? handleRegisterSubmit : handleEditSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <form
+              onSubmit={showRegisterModal ? handleRegisterSubmit : handleEditSubmit}
+              style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}
+            >
+              {/* Patient Full Name */}
               <div>
                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
                   Patient Full Name *
@@ -708,49 +975,156 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
                 />
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
-                    Age (Years)
-                  </label>
-                  <input
-                    type="number"
-                    value={formAge}
-                    onChange={(e) => setFormAge(e.target.value)}
-                    placeholder="e.g. 58"
-                    style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
-                  />
+              {/* DOB & Age Section — Strict Source of Truth */}
+              <div style={{ background: '#FAFAF8', padding: '14px', borderRadius: '8px', border: '1px solid #E8E6E1' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: '#252525', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                    Demographic Verification (DOB & Age)
+                  </span>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDobMode('dob')
+                        setFormAge('')
+                      }}
+                      style={{
+                        padding: '3px 8px',
+                        fontSize: '11px',
+                        fontWeight: dobMode === 'dob' ? 600 : 500,
+                        borderRadius: '4px',
+                        border: '1px solid #E8E6E1',
+                        background: dobMode === 'dob' ? '#A83245' : '#FFFFFF',
+                        color: dobMode === 'dob' ? '#FFFFFF' : '#777773',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      DOB Source of Truth (Recommended)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDobMode('age_only')
+                        setFormDob('')
+                      }}
+                      style={{
+                        padding: '3px 8px',
+                        fontSize: '11px',
+                        fontWeight: dobMode === 'age_only' ? 600 : 500,
+                        borderRadius: '4px',
+                        border: '1px solid #E8E6E1',
+                        background: dobMode === 'age_only' ? '#A83245' : '#FFFFFF',
+                        color: dobMode === 'age_only' ? '#FFFFFF' : '#777773',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      DOB Unknown (Age-Only)
+                    </button>
+                  </div>
                 </div>
 
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
-                    Date of Birth
-                  </label>
-                  <input
-                    type="date"
-                    value={formDob}
-                    onChange={(e) => setFormDob(e.target.value)}
-                    style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
-                  />
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '12px', alignItems: 'flex-start' }}>
+                  {dobMode === 'dob' ? (
+                    <>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                          Date of Birth (YYYY-MM-DD) *
+                        </label>
+                        <input
+                          type="date"
+                          required
+                          value={formDob}
+                          max={new Date().toISOString().slice(0, 10)}
+                          onChange={(e) => setFormDob(e.target.value)}
+                          style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                          Derived Age (Read-Only)
+                        </label>
+                        <div
+                          style={{
+                            padding: '8px 10px',
+                            background: '#F0EEE9',
+                            borderRadius: '6px',
+                            fontSize: '13px',
+                            fontWeight: 600,
+                            color: derivedAge !== null ? '#34765A' : '#777773',
+                            border: '1px solid #E8E6E1',
+                          }}
+                        >
+                          {derivedAge !== null ? `${derivedAge} years old (verified)` : 'Calculated from DOB'}
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                          Age in Years (0–130) *
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="130"
+                          required
+                          value={formAge}
+                          onChange={(e) => setFormAge(e.target.value)}
+                          placeholder="e.g. 64"
+                          style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#777773', marginBottom: '4px' }}>
+                          Date of Birth Status
+                        </label>
+                        <div
+                          style={{
+                            padding: '8px 10px',
+                            background: '#F8F7F4',
+                            borderRadius: '6px',
+                            fontSize: '12px',
+                            color: '#9C9C96',
+                            border: '1px dashed #E8E6E1',
+                          }}
+                        >
+                          Stored as Unknown (No fake date invented)
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                      Sex (for ECG criteria) *
+                    </label>
+                    <select
+                      value={formSex}
+                      onChange={(e) => setFormSex(e.target.value)}
+                      style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1', background: '#FFFFFF' }}
+                    >
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                      <option value="Other">Other</option>
+                      <option value="Unknown">Unknown</option>
+                    </select>
+                  </div>
                 </div>
 
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
-                    Sex (for ECG criteria)
-                  </label>
-                  <select
-                    value={formSex}
-                    onChange={(e) => setFormSex(e.target.value)}
-                    style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1', background: '#FFFFFF' }}
-                  >
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                    <option value="Other">Other</option>
-                    <option value="Unknown">Unknown</option>
-                  </select>
+                <div style={{ marginTop: '8px', fontSize: '11px', color: '#777773', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Info size={12} />
+                  <span>
+                    {dobMode === 'dob'
+                      ? 'Age is automatically derived from DOB using exact calendar birthday logic.'
+                      : 'Approximate age is stored without creating a fabricated date of birth.'}
+                  </span>
                 </div>
               </div>
 
+              {/* Administrative Identifiers */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
@@ -767,7 +1141,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
 
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
-                    Contact Info (Optional)
+                    Contact Reference (Optional)
                   </label>
                   <input
                     type="text"
@@ -779,6 +1153,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
                 </div>
               </div>
 
+              {/* Cardiovascular History & Medications */}
               <div>
                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
                   Relevant Cardiovascular History
@@ -787,7 +1162,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
                   rows={2}
                   value={formHistory}
                   onChange={(e) => setFormHistory(e.target.value)}
-                  placeholder="e.g. Prior MI, hypertension, dyslipidemia, CABG..."
+                  placeholder="e.g. Prior MI, hypertension, dyslipidemia, CABG, pacemaker..."
                   style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
                 />
               </div>
@@ -814,16 +1189,226 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
                     type="text"
                     value={formMedications}
                     onChange={(e) => setFormMedications(e.target.value)}
-                    placeholder="e.g. Lisinopril, Aspirin"
+                    placeholder="e.g. Lisinopril, Aspirin, Metoprolol"
                     style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
                   />
                 </div>
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
+              {/* ECG Upload Section in Registration Flow */}
+              {showRegisterModal && (
+                <div
+                  style={{
+                    border: '1px solid #E8E6E1',
+                    borderRadius: '8px',
+                    padding: '16px',
+                    background: '#FAFAF8',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <HeartPulse size={16} style={{ color: '#A83245' }} />
+                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#252525' }}>
+                          12-Lead ECG Acquisition Intake (Optional)
+                        </span>
+                      </div>
+                      <span style={{ fontSize: '12px', color: '#777773' }}>
+                        Upload a genuine ECG recording. If provided, the system links the study and runs live model inference immediately.
+                      </span>
+                    </div>
+
+                    {uploadedEcgSignal && (
+                      <button
+                        type="button"
+                        onClick={clearUploadedEcg}
+                        className="btn btn-secondary btn-sm"
+                        style={{ fontSize: '11px' }}
+                      >
+                        Remove ECG
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Format & Shape Requirements Banner */}
+                  <div
+                    style={{
+                      background: '#FFFFFF',
+                      border: '1px solid #E8E6E1',
+                      borderRadius: '6px',
+                      padding: '8px 12px',
+                      fontSize: '11px',
+                      color: '#777773',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '2px',
+                    }}
+                  >
+                    <div>
+                      <b style={{ color: '#252525' }}>Supported Formats:</b> CSV, NPY, NPZ, WFDB Header/Data (.hea + .dat).
+                    </div>
+                    <div>
+                      <b style={{ color: '#252525' }}>Required Contract:</b> 10.0-second standard 12-lead signal, shape{' '}
+                      <code style={{ background: '#F0EEE9', padding: '1px 4px', borderRadius: '3px' }}>(1000, 12)</code> at 100 Hz, in millivolts (mV).
+                    </div>
+                    <div>
+                      <b style={{ color: '#252525' }}>Standard Lead Order:</b> I, II, III, aVR, aVL, aVF, V1, V2, V3, V4, V5, V6.
+                    </div>
+                  </div>
+
+                  {/* Dropzone Area */}
+                  {!uploadedEcgSignal ? (
+                    <div
+                      onDragOver={(e) => {
+                        e.preventDefault()
+                        setEcgDragActive(true)
+                      }}
+                      onDragLeave={(e) => {
+                        e.preventDefault()
+                        setEcgDragActive(false)
+                      }}
+                      onDrop={handleEcgDrop}
+                      onClick={() => fileInputRef.current?.click()}
+                      style={{
+                        border: `2px dashed ${ecgDragActive ? '#A83245' : '#D0CECA'}`,
+                        borderRadius: '8px',
+                        padding: '24px',
+                        textAlign: 'center',
+                        background: ecgDragActive ? '#F8EAED' : '#FFFFFF',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <UploadCloud size={32} style={{ color: ecgDragActive ? '#A83245' : '#9C9C96', margin: '0 auto 8px' }} />
+                      <div style={{ fontSize: '13px', fontWeight: 600, color: '#252525', marginBottom: '2px' }}>
+                        Click to select or drag & drop 12-lead ECG file
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#777773' }}>
+                        CSV (1000 rows × 12 cols), NPY/NPZ array, or WFDB record
+                      </div>
+
+                      {ecgValidationStatus === 'validating' && (
+                        <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '12px', color: '#A83245' }}>
+                          <RefreshCw size={14} className="spin-animation" />
+                          <span>Validating signal dimensions & quality...</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    /* Valid Waveform Preview */
+                    <div style={{ background: '#FFFFFF', borderRadius: '8px', border: '1px solid #E8E6E1', padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <CheckCircle2 size={16} style={{ color: '#34765A' }} />
+                          <span style={{ fontSize: '13px', fontWeight: 700, color: '#252525' }}>
+                            {uploadedEcgFile?.name || 'Uploaded ECG Signal'}
+                          </span>
+                          <span style={{ fontSize: '11px', padding: '2px 6px', borderRadius: '4px', background: '#E8F4EE', color: '#34765A', fontWeight: 600 }}>
+                            VALID 1000×12 (100 Hz)
+                          </span>
+                        </div>
+
+                        {uploadedEcgMetadata && (
+                          <div style={{ fontSize: '12px', color: '#777773' }}>
+                            Quality:{' '}
+                            <b style={{ color: uploadedEcgMetadata.quality_status === 'optimal' ? '#34765A' : '#A83245' }}>
+                              {uploadedEcgMetadata.quality_status}
+                            </b>{' '}
+                            ({uploadedEcgMetadata.quality_score?.toFixed(1) ?? '98.0'}%)
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Interactive ECG Waveform Canvas */}
+                      <div style={{ height: '240px', border: '1px solid #E8E6E1', borderRadius: '6px', overflow: 'hidden' }}>
+                        <ECGViewer signal={uploadedEcgSignal} samplingRate={100} />
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#252525', marginBottom: '2px' }}>
+                            Model Checkpoint for Live Inference
+                          </label>
+                          <select
+                            value={selectedModel}
+                            onChange={(e) => setSelectedModel(e.target.value)}
+                            style={{ width: '100%', padding: '6px 8px', fontSize: '12px', borderRadius: '4px', border: '1px solid #E8E6E1', background: '#FFFFFF' }}
+                          >
+                            <option value="seq">Sequential ResNet1D (Benchmark Top Performer)</option>
+                            <option value="resnet1d">Standard ResNet1D Backbone</option>
+                            <option value="hybrid">Hybrid Gated (Deep Feature Integration)</option>
+                            <option value="gated">Gated Multi-Scale Feature Model</option>
+                            <option value="feat">Handcrafted Features Classifier</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#252525', marginBottom: '2px' }}>
+                            Assigned Reviewing Clinician
+                          </label>
+                          <input
+                            type="text"
+                            value={assignedClinician}
+                            onChange={(e) => setAssignedClinician(e.target.value)}
+                            style={{ width: '100%', padding: '6px 8px', fontSize: '12px', borderRadius: '4px', border: '1px solid #E8E6E1' }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Inline ECG Validation Error Notice */}
+                  {ecgValidationStatus === 'error' && ecgValidationError && (
+                    <div
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: '6px',
+                        background: '#FDEEEE',
+                        border: '1px solid #F5C6CB',
+                        color: '#B33A3A',
+                        fontSize: '12px',
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '8px',
+                      }}
+                    >
+                      <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: '2px' }} />
+                      <div>
+                        <b>ECG Validation Rejected:</b> {ecgValidationError}
+                        <div style={{ fontSize: '11px', color: '#777773', marginTop: '2px' }}>
+                          Patient demographics have been preserved. You can attach another file or register without an ECG.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Hidden inputs for file selection */}
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept=".csv,.npy,.npz,.hea,.dat"
+                    style={{ display: 'none' }}
+                    onChange={handleEcgFileChange}
+                  />
+                  <input
+                    type="file"
+                    ref={datFileInputRef}
+                    accept=".dat"
+                    style={{ display: 'none' }}
+                    onChange={handleDatFileChange}
+                  />
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
                 <button
                   type="button"
                   className="btn btn-secondary"
+                  disabled={formSubmitting}
                   onClick={() => {
                     setShowRegisterModal(false)
                     setShowEditModal(false)
@@ -831,8 +1416,22 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
                 >
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary" disabled={formSubmitting}>
-                  {formSubmitting ? 'Saving...' : showRegisterModal ? 'Register Patient' : 'Save Changes'}
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={formSubmitting}
+                  style={{ minWidth: '160px' }}
+                >
+                  {formSubmitting ? (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <RefreshCw size={14} className="spin-animation" />
+                      {uploadedEcgSignal ? 'Analyzing & Registering...' : 'Saving Patient...'}
+                    </span>
+                  ) : showRegisterModal ? (
+                    uploadedEcgSignal ? 'Register Patient & Run Analysis' : 'Register Patient'
+                  ) : (
+                    'Save Changes'
+                  )}
                 </button>
               </div>
             </form>
@@ -840,7 +1439,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
         </div>
       )}
 
-      {/* Attach ECG Study Modal */}
+      {/* Attach ECG Study Modal (Existing Patient Chart) */}
       {showAttachECGModal && selectedPatient && (
         <div className="modal-backdrop">
           <div className="card modal-dialog" style={{ width: '480px', padding: '24px' }}>

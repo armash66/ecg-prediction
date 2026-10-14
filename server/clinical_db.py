@@ -9,6 +9,7 @@ import json
 import time
 import uuid
 import sqlite3
+from datetime import datetime, date
 from typing import Optional, List, Dict, Any, Tuple
 import numpy as np
 
@@ -23,6 +24,92 @@ def get_db_connection(db_path: str) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
+
+
+def calculate_age_from_dob(dob_str: Optional[str], ref_date: Optional[date] = None) -> Optional[int]:
+    """
+    Calculates exact integer age from a YYYY-MM-DD DOB string using calendar birthday logic.
+    Returns None if dob_str is empty, null, or invalid.
+    """
+    if not dob_str or not isinstance(dob_str, str):
+        return None
+    dob_clean = dob_str.strip()
+    if not dob_clean:
+        return None
+    try:
+        if "T" in dob_clean:
+            dob_clean = dob_clean.split("T")[0]
+        dob_d = datetime.strptime(dob_clean, "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+    if ref_date is None:
+        ref_date = date.today()
+
+    if dob_d > ref_date:
+        return None  # Future DOB is invalid
+
+    has_had_birthday = (ref_date.month, ref_date.day) >= (dob_d.month, dob_d.day)
+    age = ref_date.year - dob_d.year - (0 if has_had_birthday else 1)
+    return age
+
+
+def validate_and_resolve_dob_and_age(
+    dob: Optional[str],
+    age: Optional[int],
+    ref_date: Optional[date] = None
+) -> Tuple[str, Optional[int]]:
+    """
+    Enforces strict patient DOB and age source-of-truth rules:
+    - If DOB is entered:
+        * Calculate age automatically using exact calendar birthday logic.
+        * DOB is the single source of truth; any client-provided age is overridden by derived age.
+        * Rejects impossible future DOBs.
+        * Validates that derived age is within realistic human lifespan [0, 130].
+    - If DOB is not entered (empty/null):
+        * If age is entered, validate age is an integer in [0, 130].
+        * DOB is stored as empty string (unknown). We NEVER invent a fake DOB.
+    - If neither is entered:
+        * Returns ("", None).
+    """
+    if ref_date is None:
+        ref_date = date.today()
+
+    dob_clean = (dob or "").strip()
+    if dob_clean:
+        if "T" in dob_clean:
+            dob_clean = dob_clean.split("T")[0]
+        try:
+            dob_d = datetime.strptime(dob_clean, "%Y-%m-%d").date()
+        except Exception:
+            raise ValueError(f"Invalid Date of Birth format: '{dob}'. Expected YYYY-MM-DD.")
+
+        if dob_d > ref_date:
+            raise ValueError(f"Date of Birth '{dob_clean}' is in the future. Future birth dates are impossible.")
+
+        has_had_birthday = (ref_date.month, ref_date.day) >= (dob_d.month, dob_d.day)
+        derived_age = ref_date.year - dob_d.year - (0 if has_had_birthday else 1)
+
+        if derived_age < 0 or derived_age > 130:
+            raise ValueError(f"Calculated age {derived_age} is unreasonable. Must be between 0 and 130 years.")
+
+        return dob_d.strftime("%Y-%m-%d"), derived_age
+
+    # DOB is empty/not provided
+    if age is not None and str(age).strip() != "":
+        try:
+            age_int = int(age)
+        except (ValueError, TypeError):
+            raise ValueError(f"Age must be a valid integer, got '{age}'.")
+
+        if age_int < 0 or age_int > 130:
+            raise ValueError(f"Age {age_int} is unreasonable. Must be between 0 and 130 years.")
+
+        # Age-only entry: DOB is unknown (never invent an exact DOB!)
+        return "", age_int
+
+    return "", None
+
 
 
 def init_clinical_db(db_path: str, samples_path: Optional[str] = None):
@@ -391,6 +478,11 @@ def list_patients(
     cur.execute(sql, params)
     rows = cur.fetchall()
     results = [dict(row) for row in rows]
+    for r in results:
+        if r.get("dob"):
+            derived = calculate_age_from_dob(r["dob"])
+            if derived is not None:
+                r["age"] = derived
     conn.close()
     return results
 
@@ -408,6 +500,10 @@ def get_patient_detail(db_path: str, patient_id_or_uid: str) -> Optional[Dict[st
         return None
 
     pat = dict(pat_row)
+    if pat.get("dob"):
+        derived = calculate_age_from_dob(pat["dob"])
+        if derived is not None:
+            pat["age"] = derived
 
     # Encounters
     cur.execute("""
@@ -458,18 +554,27 @@ def create_patient(db_path: str, data: Dict[str, Any]) -> Dict[str, Any]:
     uid = str(uuid.uuid4())
     now = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
 
+    # Source of truth DOB / Age validation
+    dob_val, age_val = validate_and_resolve_dob_and_age(data.get("dob"), data.get("age"))
+
     # Generate sequential or unique patient_id code
     patient_id_code = data.get("patient_id")
     if not patient_id_code:
         cur.execute("SELECT COUNT(*) AS cnt FROM patients;")
         next_seq = cur.fetchone()["cnt"] + 1
-        patient_id_code = f"PAT-2026-{next_seq:04d}"
-
-    # Check for duplicate patient_id
-    cur.execute("SELECT id FROM patients WHERE patient_id = ?", (patient_id_code,))
-    if cur.fetchone():
-        conn.close()
-        raise ValueError(f"Patient with identifier '{patient_id_code}' already exists.")
+        while True:
+            cand = f"PAT-2026-{next_seq:04d}"
+            cur.execute("SELECT id FROM patients WHERE patient_id = ?", (cand,))
+            if not cur.fetchone():
+                patient_id_code = cand
+                break
+            next_seq += 1
+    else:
+        # Check for duplicate patient_id
+        cur.execute("SELECT id FROM patients WHERE patient_id = ?", (patient_id_code,))
+        if cur.fetchone():
+            conn.close()
+            raise ValueError(f"Patient with identifier '{patient_id_code}' already exists.")
 
     cur.execute("""
     INSERT INTO patients (
@@ -481,8 +586,8 @@ def create_patient(db_path: str, data: Dict[str, Any]) -> Dict[str, Any]:
         patient_id_code,
         data.get("mrn", "").strip(),
         data["name"].strip(),
-        data.get("dob", "").strip(),
-        data.get("age"),
+        dob_val,
+        age_val,
         data.get("sex", "Unknown"),
         data.get("contact", "").strip(),
         data.get("clinical_history", "").strip(),
@@ -502,12 +607,20 @@ def update_patient(db_path: str, patient_id_or_uid: str, updates: Dict[str, Any]
     conn = get_db_connection(db_path)
     cur = conn.cursor()
 
-    cur.execute("SELECT id FROM patients WHERE id = ? OR patient_id = ?", (patient_id_or_uid, patient_id_or_uid))
+    cur.execute("SELECT * FROM patients WHERE id = ? OR patient_id = ?", (patient_id_or_uid, patient_id_or_uid))
     row = cur.fetchone()
     if not row:
         conn.close()
         return None
     uid = row["id"]
+
+    # If updating DOB or Age, enforce validation & single source-of-truth rules
+    if "dob" in updates or "age" in updates:
+        cand_dob = updates.get("dob") if "dob" in updates else row["dob"]
+        cand_age = updates.get("age") if "age" in updates else row["age"]
+        dob_val, age_val = validate_and_resolve_dob_and_age(cand_dob, cand_age)
+        updates["dob"] = dob_val
+        updates["age"] = age_val
 
     now = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
     fields = []
@@ -531,6 +644,7 @@ def update_patient(db_path: str, patient_id_or_uid: str, updates: Dict[str, Any]
     conn.commit()
     conn.close()
     return get_patient_detail(db_path, uid)
+
 
 
 def delete_patient(db_path: str, patient_id_or_uid: str) -> bool:
@@ -693,7 +807,13 @@ def create_ecg_study(
     # Generate sequential study code
     cur.execute("SELECT COUNT(*) AS cnt FROM ecg_studies;")
     next_seq = cur.fetchone()["cnt"] + 1
-    study_code = f"STU-2026-{next_seq:04d}"
+    while True:
+        study_code = f"STU-2026-{next_seq:04d}"
+        cur.execute("SELECT id FROM ecg_studies WHERE study_id = ?", (study_code,))
+        if not cur.fetchone():
+            break
+        next_seq += 1
+
     uid = str(uuid.uuid4())
     now = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
 
@@ -706,7 +826,15 @@ def create_ecg_study(
             enc_uid = last_enc["id"]
         else:
             enc_uid = str(uuid.uuid4())
-            enc_code = f"ENC-2026-{next_seq:04d}"
+            cur.execute("SELECT COUNT(*) AS cnt FROM encounters;")
+            enc_seq = cur.fetchone()["cnt"] + 1
+            while True:
+                enc_code = f"ENC-2026-{enc_seq:04d}"
+                cur.execute("SELECT id FROM encounters WHERE encounter_id = ?", (enc_code,))
+                if not cur.fetchone():
+                    break
+                enc_seq += 1
+
             cur.execute("""
             INSERT INTO encounters (
                 id, encounter_id, patient_id, encounter_date, encounter_type,
@@ -738,7 +866,16 @@ def create_ecg_study(
         now, now
     ))
 
-    # Create initial blank draft clinical note
+    # Create initial blank draft clinical note with unique note_id
+    cur.execute("SELECT COUNT(*) AS cnt FROM clinical_notes;")
+    note_seq = cur.fetchone()["cnt"] + 1
+    while True:
+        note_code = f"NOTE-2026-{note_seq:04d}"
+        cur.execute("SELECT id FROM clinical_notes WHERE note_id = ?", (note_code,))
+        if not cur.fetchone():
+            break
+        note_seq += 1
+
     cur.execute("""
     INSERT INTO clinical_notes (
         id, note_id, study_id, patient_id, encounter_id, author,
@@ -748,9 +885,10 @@ def create_ecg_study(
         status, finalized_by, finalized_at, revision, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, 'Routine Diagnostic 12-Lead ECG Evaluation', '', '', '', '', '', '', '', 0, '', 'draft', '', '', 1, ?, ?)
     """, (
-        str(uuid.uuid4()), f"NOTE-{study_code[-4:]}",
+        str(uuid.uuid4()), note_code,
         uid, pat_uid, enc_uid, assigned_clinician, now, now
     ))
+
 
     conn.commit()
     conn.close()
@@ -1452,7 +1590,7 @@ def get_clinical_overview(db_path: str) -> Dict[str, Any]:
 
     # Recent patients
     cur.execute("""
-    SELECT p.id, p.patient_id, p.name, p.age, p.sex, p.clinical_history, p.updated_at,
+    SELECT p.id, p.patient_id, p.name, p.dob, p.age, p.sex, p.clinical_history, p.updated_at,
            COUNT(s.id) AS study_count
     FROM patients p
     LEFT JOIN ecg_studies s ON p.id = s.patient_id
@@ -1460,6 +1598,11 @@ def get_clinical_overview(db_path: str) -> Dict[str, Any]:
     ORDER BY p.updated_at DESC LIMIT 5;
     """)
     recent_patients = [dict(r) for r in cur.fetchall()]
+    for rp in recent_patients:
+        if rp.get("dob"):
+            derived = calculate_age_from_dob(rp["dob"])
+            if derived is not None:
+                rp["age"] = derived
 
     # Recent studies
     cur.execute("""

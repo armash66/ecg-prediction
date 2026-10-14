@@ -4,6 +4,7 @@ import { NavigationTab } from './types'
 import { Sidebar } from './components/Sidebar'
 import { Header } from './components/Header'
 import { ClinicalOverviewView } from './components/ClinicalOverviewView'
+import { ECGPredictionView } from './components/ECGPredictionView'
 import { PatientsView } from './components/PatientsView'
 import { ECGWorklistView } from './components/ECGWorklistView'
 import { ClinicalECGReviewView } from './components/ClinicalECGReviewView'
@@ -29,6 +30,10 @@ const TAB_TITLES: Record<NavigationTab, { title: string; subtitle: string }> = {
   clinical_overview: {
     title: 'Overview',
     subtitle: 'Studies awaiting review, patient encounters, and recent activity.',
+  },
+  ecg_prediction: {
+    title: 'ECG Prediction',
+    subtitle: 'Standalone 12-lead inference, model evaluation, and explainable results.',
   },
   worklist: {
     title: 'ECG Worklist',
@@ -149,6 +154,13 @@ const AppContent: React.FC = () => {
               onNavigateToTab={(tab) => setCurrentTab(tab)}
               onRegisterPatient={() => setCurrentTab('patients')}
               onOpenStudy={(studyId, patientId) => openStudyForReview(studyId, patientId)}
+            />
+          )}
+
+          {currentTab === 'ecg_prediction' && (
+            <ECGPredictionView
+              onOpenStudyForReview={(studyId, patientId) => openStudyForReview(studyId, patientId)}
+              onNavigateToPatients={() => setCurrentTab('patients')}
             />
           )}
 

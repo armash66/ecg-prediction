@@ -31,7 +31,16 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, health }) => {
   const [collapsed, setCollapsed] = useState<boolean>(false)
-  const [researchExpanded, setResearchExpanded] = useState<boolean>(true)
+  const isResearchRoute = currentTab === 'research_lab' || [
+    'explainability',
+    'signal_explorer',
+    'model_comparison',
+    'faithfulness',
+    'robustness',
+    'modellab',
+    'research_analytics',
+  ].includes(currentTab)
+  const [researchExpanded, setResearchExpanded] = useState<boolean>(isResearchRoute)
   const {
     analysisResult,
     researchSubTab,
@@ -44,6 +53,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, healt
       id: 'clinical_overview' as NavigationTab,
       label: 'Overview',
       icon: LayoutDashboard,
+      badge: null,
+    },
+    {
+      id: 'ecg_prediction' as NavigationTab,
+      label: 'ECG Prediction',
+      icon: HeartPulse,
       badge: null,
     },
     {

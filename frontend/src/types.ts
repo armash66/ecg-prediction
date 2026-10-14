@@ -102,6 +102,11 @@ export interface MetricsResponse {
 
 export interface PreloadedSampleSummary {
   index: number
+  record_id?: number
+  patient_id?: number
+  age?: number
+  sex?: string
+  scp_codes?: string[]
   leads: number
   samples: number
   duration_sec: number
@@ -111,6 +116,12 @@ export interface PreloadedSampleSummary {
 
 export interface SampleDetailResponse {
   index: number
+  record_id?: number
+  patient_id?: number
+  age?: number
+  sex?: string
+  scp_codes?: string[]
+  scp_details?: Record<string, number>
   signal: number[][] // 1000 x 12
   labels: DiagnosticClass[]
   label_names: string[]
@@ -226,6 +237,7 @@ export interface AnalysisResponse {
 }
 
 export type ResearchSubTab =
+  | 'dataset_bench'
   | 'modellab'
   | 'explainability'
   | 'model_comparison'
@@ -236,6 +248,7 @@ export type ResearchSubTab =
 
 export type NavigationTab =
   | 'clinical_overview'
+  | 'ecg_prediction'
   | 'worklist'
   | 'patients'
   | 'ecg_review'
@@ -628,3 +641,166 @@ export interface SavedAnalysisDetail {
   explain_class: string
   notes: string
 }
+
+export interface PatientCreatePayload {
+  name: string
+  mrn?: string
+  dob?: string
+  age?: number | null
+  sex?: string
+  contact?: string
+  clinical_history?: string
+  allergies?: string
+  medications?: string
+  notes?: string
+  ecg_signal?: number[][]
+  ecg_filename?: string
+  ecg_metadata?: Record<string, any>
+  assigned_clinician?: string
+}
+
+export interface PTBXLDatasetInfo {
+  installed: boolean
+  message?: string
+  source: string
+  physionet_url?: string
+  total_records?: number
+  held_out_test_fold?: number
+  held_out_test_records?: number
+  train_folds?: string
+  validation_fold?: string
+  sampling_rate?: number
+  duration_sec?: number
+  signal_shape?: [number, number]
+  leads?: string[]
+  classes?: DiagnosticClass[]
+  class_names?: Record<DiagnosticClass, string>
+  fold10_class_distribution?: Record<DiagnosticClass, number>
+  unseen_verified?: boolean
+  verification_note?: string
+}
+
+export interface PTBXLRecordSummary {
+  index: number
+  ecg_id: number
+  patient_id: number | null
+  age: number | null
+  sex: string
+  strat_fold: number
+  is_held_out_test: boolean
+  scp_codes: Record<string, number>
+  reference_classes: DiagnosticClass[]
+  reference_class_names: string[]
+  multilabel_targets: Record<DiagnosticClass, number>
+}
+
+export interface PTBXLRecordsResponse {
+  total: number
+  offset: number
+  limit: number
+  fold: number
+  fold_description: string
+  records: PTBXLRecordSummary[]
+}
+
+export interface PTBXLRecordDetail extends PTBXLRecordSummary {
+  signal: number[][]
+  leads: string[]
+  sampling_rate: number
+  duration_sec: number
+  units: string
+  quality?: Record<string, any>
+  quality_status: 'optimal' | 'acceptable_with_warnings' | 'poor' | 'rejected'
+  quality_score: number
+  quality_warnings: string[]
+  verification: {
+    source: string
+    dataset_path: string
+    fold_status: string
+    contract: string
+  }
+}
+
+export interface FiveClassAnalysisItem {
+  class: DiagnosticClass
+  name: string
+  score: number
+  threshold: number
+  predicted_positive: boolean
+  reference_label: 'positive' | 'negative' | 'unknown'
+  reference_is_positive: boolean
+  concordance: 'TP' | 'TN' | 'FP' | 'FN'
+  status_text: string
+}
+
+export interface PTBXLBenchmarkAnalysisResult {
+  record_id: number
+  index: number
+  patient_id: number | null
+  age: number | null
+  sex: string
+  strat_fold: number
+  is_held_out_test: boolean
+  model_name: string
+  model_display_name: string
+  latency_ms: number
+  preprocessing_details: string
+  five_class_results: FiveClassAnalysisItem[]
+  explained_class: DiagnosticClass
+  explained_class_name: string
+  attribution: number[][] | null
+  lead_importance: Array<{
+    lead: string
+    score: number
+    normalized: number
+  }> | null
+  time_regions: Array<{
+    start_time: number
+    end_time: number
+    mean_abs_attr: number
+  }> | null
+  plain_language_explanation: string
+  quality_warnings: string[]
+  quality_status: string
+  quality_score: number
+  disclaimer: string
+  signal: number[][]
+  leads: string[]
+  units: string
+  sampling_rate: number
+}
+
+export interface PTBXLEvaluationSummary {
+  available: boolean
+  message?: string
+  model: string
+  split: string
+  records_evaluated: number
+  macro_auroc: number
+  micro_auroc: number
+  macro_auprc: number
+  macro_f1: number
+  micro_f1: number
+  macro_sensitivity: number
+  macro_specificity: number
+  per_class: Record<DiagnosticClass, {
+    class: DiagnosticClass
+    name: string
+    auroc: number
+    auprc: number
+    f1: number
+    sensitivity: number
+    specificity: number
+    threshold: number
+    confusion: {
+      tn: number
+      fp: number
+      fn: number
+      tp: number
+      total: number
+    }
+  }>
+  held_out_verified: boolean
+  provenance: string
+}
+
