@@ -66,7 +66,7 @@ export const EncountersHistoryView: React.FC<EncountersHistoryViewProps> = ({ on
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', maxWidth: '1400px', margin: '0 auto' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', maxWidth: '1400px', margin: '0 auto', width: '100%' }}>
       {/* Header */}
       <div
         className="card"
@@ -260,6 +260,133 @@ export const EncountersHistoryView: React.FC<EncountersHistoryViewProps> = ({ on
           </div>
         </div>
       )}
+
+      {/* Historical Encounters & Studies Table */}
+      <div className="card" style={{ padding: '20px 24px', background: '#FFFFFF' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+          <div>
+            <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#252525', margin: 0 }}>
+              Registered Studies &amp; Encounters History ({studies.length})
+            </h3>
+            <span style={{ fontSize: '12px', color: '#777773' }}>
+              All longitudinal ECG acquisitions registered in the clinical repository.
+            </span>
+          </div>
+          <button className="btn btn-secondary btn-sm" onClick={loadAllStudies} disabled={loading}>
+            <RefreshCw size={13} className={loading ? 'spin-animation' : ''} />
+            <span>Refresh</span>
+          </button>
+        </div>
+
+        {loading ? (
+          <div style={{ padding: '30px', textAlign: 'center', color: '#777773', fontSize: '13px' }}>
+            <RefreshCw size={18} className="spin-animation" style={{ margin: '0 auto 8px', color: '#A83245' }} />
+            Loading studies history...
+          </div>
+        ) : studies.length === 0 ? (
+          <div style={{ padding: '30px', textAlign: 'center', color: '#777773', fontSize: '13px' }}>
+            No recorded encounters yet. Run an analysis and save to a patient to populate encounters.
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto', border: '1px solid #E8E6E1', borderRadius: '6px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ background: '#FAFAF8', borderBottom: '1px solid #E8E6E1', textAlign: 'left' }}>
+                  <th style={{ padding: '10px 14px', color: '#777773', fontWeight: 600 }}>Study ID</th>
+                  <th style={{ padding: '10px 14px', color: '#777773', fontWeight: 600 }}>Patient</th>
+                  <th style={{ padding: '10px 14px', color: '#777773', fontWeight: 600 }}>Recorded Date</th>
+                  <th style={{ padding: '10px 14px', color: '#777773', fontWeight: 600 }}>Predicted Superclasses</th>
+                  <th style={{ padding: '10px 14px', color: '#777773', fontWeight: 600 }}>Status</th>
+                  <th style={{ padding: '10px 14px', color: '#777773', fontWeight: 600, textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {studies.map((s) => {
+                  const detected = s.flags || []
+                  return (
+                    <tr key={s.id} style={{ borderBottom: '1px solid #F0EEE9' }}>
+                      <td style={{ padding: '10px 14px', fontWeight: 700 }}>
+                        <code style={{ fontSize: '11px', color: '#A83245', background: '#F8EAED', padding: '2px 6px', borderRadius: '4px' }}>
+                          {s.study_id}
+                        </code>
+                      </td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <div style={{ fontWeight: 600, color: '#252525' }}>{s.patient_name || 'Anonymous'}</div>
+                        <div style={{ fontSize: '11px', color: '#777773' }}>{s.patient_id}</div>
+                      </td>
+                      <td style={{ padding: '10px 14px', color: '#777773', fontSize: '12px' }}>
+                        {s.recorded_at ? s.recorded_at.slice(0, 16).replace('T', ' ') : 'N/A'}
+                      </td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                          {detected.length === 0 ? (
+                            <span style={{ fontSize: '11px', color: '#777773' }}>None detected</span>
+                          ) : (
+                            detected.map((cls: string) => (
+                              <span
+                                key={cls}
+                                style={{
+                                  fontSize: '10px',
+                                  fontWeight: 700,
+                                  padding: '1px 5px',
+                                  borderRadius: '3px',
+                                  background: cls === 'NORM' ? '#E8F4EE' : '#FDEEEE',
+                                  color: cls === 'NORM' ? '#34765A' : '#B33A3A',
+                                }}
+                              >
+                                {cls}
+                              </span>
+                            ))
+                          )}
+                        </div>
+                      </td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            padding: '2px 7px',
+                            borderRadius: '4px',
+                            background: s.status === 'finalized' ? '#E8F4EE' : '#FDF4E7',
+                            color: s.status === 'finalized' ? '#34765A' : '#B77925',
+                          }}
+                        >
+                          {s.status.toUpperCase()}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px 14px', textAlign: 'right' }}>
+                        <div style={{ display: 'inline-flex', gap: '6px' }}>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            style={{ fontSize: '11px', padding: '3px 8px' }}
+                            onClick={() => {
+                              setStudyAId(s.id)
+                              if (studies.length > 1) {
+                                const other = studies.find((o) => o.id !== s.id)
+                                if (other) setStudyBId(other.id)
+                              }
+                            }}
+                          >
+                            Set Baseline
+                          </button>
+                          <button
+                            className="btn btn-primary btn-sm"
+                            style={{ fontSize: '11px', padding: '3px 8px' }}
+                            onClick={() => onOpenStudyForReview(s.id, s.patient_id)}
+                          >
+                            <Activity size={12} />
+                            <span>Review</span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

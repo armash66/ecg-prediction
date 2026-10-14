@@ -89,7 +89,7 @@ export const ClinicalReportsView: React.FC<ClinicalReportsViewProps> = ({ initia
   const selectedStudy = studies.find((s) => s.id === selectedStudyId)
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '1200px', margin: '0 auto' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '1200px', margin: '0 auto', width: '100%' }}>
       {/* Report Controls Bar */}
       <div
         className="card"
@@ -163,7 +163,7 @@ export const ClinicalReportsView: React.FC<ClinicalReportsViewProps> = ({ initia
           padding: '0',
           overflow: 'hidden',
           background: '#FFFFFF',
-          minHeight: '800px',
+          minHeight: '400px',
         }}
       >
         {loading ? (
@@ -177,9 +177,21 @@ export const ClinicalReportsView: React.FC<ClinicalReportsViewProps> = ({ initia
             title="Clinical Report Preview"
             style={{
               width: '100%',
-              height: '840px',
+              minHeight: '840px',
               border: 'none',
               background: '#FFFFFF',
+              display: 'block',
+            }}
+            onLoad={(e) => {
+              try {
+                const doc = e.currentTarget.contentWindow?.document
+                if (doc?.body) {
+                  const h = Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight)
+                  if (h > 400) {
+                    e.currentTarget.style.height = `${h + 40}px`
+                  }
+                }
+              } catch (_) {}
             }}
           />
         ) : (

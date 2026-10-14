@@ -142,7 +142,7 @@ export const ECGPredictionView: React.FC<ECGPredictionViewProps> = ({
   }, [])
 
   // 1. File Upload & Validation
-  const processUpload = async (primary: File, secondary?: File) => {
+  const processUpload = async (fileOrFiles: File | File[], secondary?: File) => {
     const reqId = ++uploadCounterRef.current
     setIsUploading(true)
     setUploadError(null)
@@ -155,7 +155,7 @@ export const ECGPredictionView: React.FC<ECGPredictionViewProps> = ({
     setActiveBenchmarkSample(null)
 
     try {
-      const resp: ValidationResponse = await validateSignalFile(primary, secondary)
+      const resp: ValidationResponse = await validateSignalFile(fileOrFiles, secondary)
 
       // Prevent out-of-order race conditions
       if (reqId !== uploadCounterRef.current) return
@@ -170,8 +170,15 @@ export const ECGPredictionView: React.FC<ECGPredictionViewProps> = ({
 
       setCurrentSignal(resp.signal)
       setCurrentMetadata(resp.metadata || null)
-      setCurrentFile(primary)
-      if (secondary) setDatFile(secondary)
+      if (Array.isArray(fileOrFiles)) {
+        const hea = fileOrFiles.find((f) => f.name.toLowerCase().endsWith('.hea'))
+        const dat = fileOrFiles.find((f) => f.name.toLowerCase().endsWith('.dat'))
+        setCurrentFile(hea || fileOrFiles[0])
+        if (dat) setDatFile(dat)
+      } else {
+        setCurrentFile(fileOrFiles)
+        if (secondary) setDatFile(secondary)
+      }
       setUploadError(null)
     } catch (err: any) {
       if (reqId !== uploadCounterRef.current) return
@@ -195,15 +202,20 @@ export const ECGPredictionView: React.FC<ECGPredictionViewProps> = ({
     if (files.length === 0) return
 
     const heaFile = files.find((f) => f.name.toLowerCase().endsWith('.hea'))
-    const dat = files.find((f) => f.name.toLowerCase().endsWith('.dat'))
+    const datFiles = files.filter((f) => f.name.toLowerCase().endsWith('.dat'))
 
     if (heaFile) {
-      if (dat) {
-        await processUpload(heaFile, dat)
+      if (datFiles.length > 0) {
+        await processUpload(files)
       } else {
         setCurrentFile(heaFile)
-        datFileInputRef.current?.click()
+        setUploadError(`WFDB header '${heaFile.name}' dropped, but matching .dat signal file was not provided. Please drag both .hea and .dat together.`)
       }
+      return
+    }
+
+    if (datFiles.length > 0 && !heaFile) {
+      setUploadError(`WFDB signal file '${datFiles[0].name}' dropped without a .hea header file. Please drag both .hea and .dat files together.`)
       return
     }
 
@@ -218,16 +230,28 @@ export const ECGPredictionView: React.FC<ECGPredictionViewProps> = ({
   }
 
   const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const files = e.target.files ? Array.from(e.target.files) : []
+    if (files.length === 0) return
 
-    if (file.name.toLowerCase().endsWith('.hea')) {
-      setCurrentFile(file)
-      datFileInputRef.current?.click()
+    const heaFile = files.find((f) => f.name.toLowerCase().endsWith('.hea'))
+    const datFiles = files.filter((f) => f.name.toLowerCase().endsWith('.dat'))
+
+    if (heaFile) {
+      if (datFiles.length > 0) {
+        await processUpload(files)
+      } else {
+        setCurrentFile(heaFile)
+        setUploadError(`WFDB header '${heaFile.name}' selected, but matching .dat signal file was not selected. Please select both .hea and .dat together.`)
+      }
       return
     }
 
-    await processUpload(file)
+    if (datFiles.length > 0 && !heaFile) {
+      setUploadError(`WFDB signal file '${datFiles[0].name}' selected without a .hea header file. Please select both .hea and .dat together.`)
+      return
+    }
+
+    await processUpload(files.length > 1 ? files : files[0])
   }
 
   const handleDatFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -539,6 +563,7 @@ export const ECGPredictionView: React.FC<ECGPredictionViewProps> = ({
         <input
           ref={fileInputRef}
           type="file"
+          multiple
           accept=".csv,.npy,.npz,.hea,.dat"
           style={{ display: 'none' }}
           onChange={handleFileInputChange}

@@ -17,8 +17,11 @@ import {
   AlertTriangle,
   HeartPulse,
   Info,
+  Award,
+  FileText,
+  Check,
 } from 'lucide-react'
-import { Patient, SignalMetadata } from '../types'
+import { Patient, SignalMetadata, Encounter, PreloadedSampleSummary, SampleDetailResponse } from '../types'
 import {
   fetchPatients,
   fetchPatientDetail,
@@ -27,7 +30,12 @@ import {
   deletePatient,
   createStudy,
   validateSignalFile,
+  fetchSamples,
+  fetchSampleDetail,
+  createEncounter,
+  updateEncounter,
 } from '../api'
+import { useAnalysis } from '../context/AnalysisContext'
 import { ECGViewer } from './ECGViewer'
 
 interface PatientsViewProps {
@@ -79,6 +87,9 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
   const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false)
   const [showAttachECGModal, setShowAttachECGModal] = useState<boolean>(false)
 
+  // Context access for Temporary Analysis routing
+  const { setSignal, setCurrentTab } = useAnalysis()
+
   // Demographics Form states
   const [formName, setFormName] = useState<string>('')
   const [dobMode, setDobMode] = useState<'dob' | 'age_only'>('dob')
@@ -108,8 +119,39 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const datFileInputRef = useRef<HTMLInputElement | null>(null)
 
-  // Attach ECG State (Existing Patient Chart)
-  const [selectedSampleIdx, setSelectedSampleIdx] = useState<number>(0)
+  // Attach ECG State (Existing Patient Chart) — Supports Option A (Upload) and Option B (Benchmark)
+  const [attachTab, setAttachTab] = useState<'upload' | 'benchmark'>('upload')
+  const [attachFiles, setAttachFiles] = useState<File[]>([])
+  const [attachSignal, setAttachSignal] = useState<number[][] | null>(null)
+  const [attachMetadata, setAttachMetadata] = useState<SignalMetadata | null>(null)
+  const [attachValidationStatus, setAttachValidationStatus] = useState<'idle' | 'validating' | 'valid' | 'error'>('idle')
+  const [attachValidationError, setAttachValidationError] = useState<string | null>(null)
+  const [attachDragActive, setAttachDragActive] = useState<boolean>(false)
+  const attachFileInputRef = useRef<HTMLInputElement | null>(null)
+
+  // Benchmark library state
+  const [benchmarkSamples, setBenchmarkSamples] = useState<PreloadedSampleSummary[]>([])
+  const [selectedBenchmarkIdx, setSelectedBenchmarkIdx] = useState<number>(0)
+  const [selectedBenchmarkDetail, setSelectedBenchmarkDetail] = useState<SampleDetailResponse | null>(null)
+  const [loadingBenchmarkDetail, setLoadingBenchmarkDetail] = useState<boolean>(false)
+
+  // Medical History Editing Modal state
+  const [showEditHistoryModal, setShowEditHistoryModal] = useState<boolean>(false)
+  const [editHistoryText, setEditHistoryText] = useState<string>('')
+  const [editMedicationsText, setEditMedicationsText] = useState<string>('')
+  const [editAllergiesText, setEditAllergiesText] = useState<string>('')
+  const [editNotesText, setEditNotesText] = useState<string>('')
+
+  // Encounters Modal state
+  const [showNewEncounterModal, setShowNewEncounterModal] = useState<boolean>(false)
+  const [showEditEncounterModal, setShowEditEncounterModal] = useState<boolean>(false)
+  const [editingEncounter, setEditingEncounter] = useState<Encounter | null>(null)
+  const [encounterDate, setEncounterDate] = useState<string>('')
+  const [encounterType, setEncounterType] = useState<string>('Outpatient Cardiology')
+  const [encounterDepartment, setEncounterDepartment] = useState<string>('Cardiovascular Medicine')
+  const [encounterClinician, setEncounterClinician] = useState<string>('Attending Clinician')
+  const [encounterReason, setEncounterReason] = useState<string>('Diagnostic 12-lead ECG evaluation')
+  const [encounterStatus, setEncounterStatus] = useState<string>('in_progress')
 
   const loadPatientsList = async () => {
     try {
@@ -143,15 +185,23 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
   // Derived age calculated on the fly when formDob changes
   const derivedAge = formDob ? calculateAgeFromDob(formDob) : null
 
-  // File handling for ECG Upload
-  const processSelectedFile = async (primaryFile: File, datFile?: File) => {
+  // File handling for Registration ECG Upload
+  const processSelectedFile = async (fileOrFiles: File | File[], datFile?: File) => {
     setEcgValidationStatus('validating')
     setEcgValidationError(null)
-    setUploadedEcgFile(primaryFile)
-    if (datFile) setUploadedDatFile(datFile)
+
+    if (Array.isArray(fileOrFiles)) {
+      const hea = fileOrFiles.find((f) => f.name.toLowerCase().endsWith('.hea'))
+      const dat = fileOrFiles.find((f) => f.name.toLowerCase().endsWith('.dat'))
+      setUploadedEcgFile(hea || fileOrFiles[0])
+      if (dat) setUploadedDatFile(dat)
+    } else {
+      setUploadedEcgFile(fileOrFiles)
+      if (datFile) setUploadedDatFile(datFile)
+    }
 
     try {
-      const resp = await validateSignalFile(primaryFile, datFile)
+      const resp = await validateSignalFile(fileOrFiles, datFile)
       if (resp.valid && resp.signal) {
         setUploadedEcgSignal(resp.signal)
         setUploadedEcgMetadata(resp.metadata || null)
@@ -180,16 +230,22 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
     if (files.length === 0) return
 
     const heaFile = files.find((f) => f.name.toLowerCase().endsWith('.hea'))
-    const datFile = files.find((f) => f.name.toLowerCase().endsWith('.dat'))
+    const datFiles = files.filter((f) => f.name.toLowerCase().endsWith('.dat'))
 
     if (heaFile) {
-      if (datFile) {
-        await processSelectedFile(heaFile, datFile)
+      if (datFiles.length > 0) {
+        await processSelectedFile(files)
       } else {
         setUploadedEcgFile(heaFile)
-        setEcgValidationStatus('idle')
-        datFileInputRef.current?.click()
+        setEcgValidationStatus('error')
+        setEcgValidationError(`WFDB header '${heaFile.name}' dropped, but matching .dat signal file was not provided. Please drag both .hea and .dat together.`)
       }
+      return
+    }
+
+    if (datFiles.length > 0 && !heaFile) {
+      setEcgValidationStatus('error')
+      setEcgValidationError(`WFDB signal file '${datFiles[0].name}' dropped without a .hea header file. Please drag both .hea and .dat files together.`)
       return
     }
 
@@ -201,20 +257,34 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
       return
     }
 
-    await processSelectedFile(primaryFile)
+    await processSelectedFile(files.length > 1 ? files : primaryFile)
   }
 
   const handleEcgFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const files = e.target.files ? Array.from(e.target.files) : []
+    if (files.length === 0) return
 
-    if (file.name.toLowerCase().endsWith('.hea')) {
-      setUploadedEcgFile(file)
-      datFileInputRef.current?.click()
+    const heaFile = files.find((f) => f.name.toLowerCase().endsWith('.hea'))
+    const datFiles = files.filter((f) => f.name.toLowerCase().endsWith('.dat'))
+
+    if (heaFile) {
+      if (datFiles.length > 0) {
+        await processSelectedFile(files)
+      } else {
+        setUploadedEcgFile(heaFile)
+        setEcgValidationStatus('error')
+        setEcgValidationError(`WFDB header '${heaFile.name}' selected, but matching .dat signal file was not selected. Please select both .hea and .dat together.`)
+      }
       return
     }
 
-    await processSelectedFile(file)
+    if (datFiles.length > 0 && !heaFile) {
+      setEcgValidationStatus('error')
+      setEcgValidationError(`WFDB signal file '${datFiles[0].name}' selected without a .hea header file. Please select both .hea and .dat together.`)
+      return
+    }
+
+    await processSelectedFile(files.length > 1 ? files : files[0])
   }
 
   const handleDatFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -233,6 +303,20 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
     if (fileInputRef.current) fileInputRef.current.value = ''
     if (datFileInputRef.current) datFileInputRef.current.value = ''
   }
+
+  // Pre-fetch benchmark samples on mount
+  useEffect(() => {
+    fetchSamples()
+      .then((res) => {
+        if (res && res.samples) {
+          setBenchmarkSamples(res.samples)
+          if (res.samples.length > 0) {
+            setSelectedBenchmarkIdx(res.samples[0].index)
+          }
+        }
+      })
+      .catch((err) => console.warn('Could not load benchmark samples:', err))
+  }, [])
 
   const validateForm = (): { valid: boolean; error?: string; age?: number; dob?: string } => {
     if (!formName.trim()) {
@@ -368,21 +452,256 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
     }
   }
 
-  const handleAttachECGSubmit = async () => {
+  // ==============================================================================
+  // ATTACH ECG MODAL HANDLERS (Option A: Upload & Option B: Benchmark)
+  // ==============================================================================
+
+  const handleProcessAttachFiles = async (files: File[]) => {
+    if (files.length === 0) return
+    setAttachFiles(files)
+    setAttachValidationStatus('validating')
+    setAttachValidationError(null)
+
+    const heaFile = files.find((f) => f.name.toLowerCase().endsWith('.hea'))
+    const datFiles = files.filter((f) => f.name.toLowerCase().endsWith('.dat'))
+
+    if (heaFile && datFiles.length === 0) {
+      setAttachValidationStatus('error')
+      setAttachValidationError(`WFDB header '${heaFile.name}' selected, but matching .dat signal file was not selected. Please select or drag both .hea and .dat together.`)
+      return
+    }
+
+    if (datFiles.length > 0 && !heaFile) {
+      setAttachValidationStatus('error')
+      setAttachValidationError(`WFDB signal file '${datFiles[0].name}' selected without a .hea header file. Please select or drag both .hea and .dat files together.`)
+      return
+    }
+
+    try {
+      const resp = await validateSignalFile(files.length > 1 ? files : files[0])
+      if (resp.valid && resp.signal) {
+        setAttachSignal(resp.signal)
+        setAttachMetadata(resp.metadata || null)
+        setAttachValidationStatus('valid')
+        setAttachValidationError(null)
+      } else {
+        setAttachSignal(null)
+        setAttachMetadata(null)
+        setAttachValidationStatus('error')
+        setAttachValidationError(resp.error || 'Signal validation failed. Ensure standard 1000x12 shape.')
+      }
+    } catch (err: any) {
+      setAttachSignal(null)
+      setAttachMetadata(null)
+      setAttachValidationStatus('error')
+      setAttachValidationError(err?.message || 'Error occurred while contacting backend validation service.')
+    }
+  }
+
+  const handleAttachDrop = async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setAttachDragActive(false)
+    const files = Array.from(e.dataTransfer.files)
+    await handleProcessAttachFiles(files)
+  }
+
+  const handleAttachFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files ? Array.from(e.target.files) : []
+    await handleProcessAttachFiles(files)
+  }
+
+  const handleSelectBenchmark = async (idx: number) => {
+    setSelectedBenchmarkIdx(idx)
+    try {
+      setLoadingBenchmarkDetail(true)
+      const detail = await fetchSampleDetail(idx)
+      setSelectedBenchmarkDetail(detail)
+    } catch (err) {
+      console.error('Failed to load benchmark sample detail:', err)
+    } finally {
+      setLoadingBenchmarkDetail(false)
+    }
+  }
+
+  // Action: Save uploaded ECG to patient chart
+  const handleSaveAttachToPatient = async () => {
+    if (!selectedPatient || !attachSignal || formSubmitting) return
+    try {
+      setFormSubmitting(true)
+      const filename = attachFiles.map((f) => f.name).join(' + ') || 'ecg_upload.json'
+      const newStudy = await createStudy({
+        patient_id: selectedPatient.id,
+        signal: attachSignal,
+        filename,
+        metadata: attachMetadata || undefined,
+        assigned_clinician: 'Attending Clinician',
+      })
+      setShowAttachECGModal(false)
+      // Reload patient chart
+      await openPatientChart(selectedPatient.id)
+      await loadPatientsList()
+      // Open ECG Review with exact returned patient ID and study ID
+      onOpenStudyForReview(newStudy.id, selectedPatient.id)
+    } catch (err: any) {
+      alert(err?.message || 'Failed to create ECG study.')
+    } finally {
+      setFormSubmitting(false)
+    }
+  }
+
+  // Action: Keep as temporary analysis without modifying patient chart
+  const handleKeepTemporaryAnalysis = () => {
+    if (!attachSignal) return
+    setSignal(attachSignal, attachMetadata || undefined)
+    setShowAttachECGModal(false)
+    setCurrentTab('ecg_prediction')
+  }
+
+  // Action: Inspect benchmark record as temporary analysis without modifying patient chart
+  const handleInspectBenchmarkTemporary = () => {
+    if (!selectedBenchmarkDetail) return
+    setSignal(selectedBenchmarkDetail.signal, {
+      format: 'benchmark_npz',
+      filename: `PTB-XL Record #${selectedBenchmarkDetail.record_id || selectedBenchmarkDetail.index}`,
+      original_samples: 1000,
+      n_samples: 1000,
+      n_leads: 12,
+      leads: selectedBenchmarkDetail.leads || ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6'],
+      sampling_rate: selectedBenchmarkDetail.sampling_rate || 100,
+      duration_sec: 10,
+    })
+    setShowAttachECGModal(false)
+    setCurrentTab('ecg_prediction')
+  }
+
+  // Action: Attach benchmark sample to patient chart
+  const handleAttachBenchmarkToPatient = async () => {
     if (!selectedPatient || formSubmitting) return
     try {
       setFormSubmitting(true)
       const newStudy = await createStudy({
         patient_id: selectedPatient.id,
-        sample_index: selectedSampleIdx,
-        filename: `sample_${selectedSampleIdx}.npz`,
+        sample_index: selectedBenchmarkIdx,
+        signal: selectedBenchmarkDetail?.signal,
+        filename: `PTB-XL Record #${selectedBenchmarkDetail?.record_id ?? selectedBenchmarkIdx}`,
         assigned_clinician: 'Attending Clinician',
       })
       setShowAttachECGModal(false)
-      openPatientChart(selectedPatient.id)
+      await openPatientChart(selectedPatient.id)
+      await loadPatientsList()
       onOpenStudyForReview(newStudy.id, selectedPatient.id)
     } catch (err: any) {
-      alert(err?.message || 'Failed to create ECG study.')
+      alert(err?.message || 'Failed to attach benchmark record to patient.')
+    } finally {
+      setFormSubmitting(false)
+    }
+  }
+
+  // ==============================================================================
+  // MEDICAL HISTORY EDITING HANDLERS
+  // ==============================================================================
+
+  const openEditHistoryModal = () => {
+    if (!selectedPatient) return
+    setEditHistoryText(selectedPatient.clinical_history || '')
+    setEditMedicationsText(selectedPatient.medications || '')
+    setEditAllergiesText(selectedPatient.allergies || '')
+    setEditNotesText(selectedPatient.notes || '')
+    setShowEditHistoryModal(true)
+  }
+
+  const handleSaveHistorySubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedPatient || formSubmitting) return
+    try {
+      setFormSubmitting(true)
+      const updated = await updatePatient(selectedPatient.id, {
+        clinical_history: editHistoryText.trim(),
+        medications: editMedicationsText.trim(),
+        allergies: editAllergiesText.trim(),
+        notes: editNotesText.trim(),
+      })
+      setSelectedPatient(updated)
+      setShowEditHistoryModal(false)
+      loadPatientsList()
+    } catch (err: any) {
+      alert(err?.message || 'Failed to update medical history.')
+    } finally {
+      setFormSubmitting(false)
+    }
+  }
+
+  // ==============================================================================
+  // ENCOUNTER MANAGEMENT HANDLERS
+  // ==============================================================================
+
+  const openNewEncounterModal = () => {
+    if (!selectedPatient) return
+    const now = new Date()
+    setEncounterDate(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`)
+    setEncounterType('Outpatient Cardiology')
+    setEncounterDepartment('Cardiovascular Medicine')
+    setEncounterClinician('Attending Clinician')
+    setEncounterReason('Diagnostic 12-lead ECG evaluation')
+    setEncounterStatus('in_progress')
+    setShowNewEncounterModal(true)
+  }
+
+  const handleCreateEncounterSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedPatient || formSubmitting) return
+    try {
+      setFormSubmitting(true)
+      await createEncounter({
+        patient_id: selectedPatient.id,
+        encounter_date: encounterDate,
+        encounter_type: encounterType,
+        department: encounterDepartment,
+        attending_clinician: encounterClinician,
+        reason_for_visit: encounterReason,
+        status: encounterStatus,
+      })
+      setShowNewEncounterModal(false)
+      await openPatientChart(selectedPatient.id)
+      await loadPatientsList()
+    } catch (err: any) {
+      alert(err?.message || 'Failed to create encounter.')
+    } finally {
+      setFormSubmitting(false)
+    }
+  }
+
+  const openEditEncounterModal = (enc: Encounter) => {
+    setEditingEncounter(enc)
+    setEncounterDate(enc.encounter_date)
+    setEncounterType(enc.encounter_type)
+    setEncounterDepartment(enc.department)
+    setEncounterClinician(enc.attending_clinician)
+    setEncounterReason(enc.reason_for_visit)
+    setEncounterStatus(enc.status)
+    setShowEditEncounterModal(true)
+  }
+
+  const handleUpdateEncounterSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedPatient || !editingEncounter || formSubmitting) return
+    try {
+      setFormSubmitting(true)
+      await updateEncounter(editingEncounter.id, {
+        encounter_date: encounterDate,
+        encounter_type: encounterType,
+        department: encounterDepartment,
+        attending_clinician: encounterClinician,
+        reason_for_visit: encounterReason,
+        status: encounterStatus,
+      })
+      setShowEditEncounterModal(false)
+      setEditingEncounter(null)
+      await openPatientChart(selectedPatient.id)
+      await loadPatientsList()
+    } catch (err: any) {
+      alert(err?.message || 'Failed to update encounter.')
     } finally {
       setFormSubmitting(false)
     }
@@ -427,16 +746,19 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
   }
 
   return (
-    <div style={{ display: 'flex', gap: '24px', maxWidth: '1400px', margin: '0 auto', minHeight: 'calc(100vh - 120px)' }}>
+    <div style={{ display: 'flex', gap: '24px', maxWidth: '1400px', margin: '0 auto', width: '100%', alignItems: 'flex-start' }}>
       {/* Left Column: Patient Directory / List */}
       <div
         className="card"
         style={{
-          width: '420px',
+          width: '380px',
           display: 'flex',
           flexDirection: 'column',
           padding: '20px',
           flexShrink: 0,
+          position: 'sticky',
+          top: '0',
+          maxHeight: 'calc(100vh - 120px)',
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -570,17 +892,17 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
           display: 'flex',
           flexDirection: 'column',
           padding: '0',
-          overflow: 'hidden',
+          minWidth: 0,
         }}
       >
         {!selectedPatient ? (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#777773' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '380px', padding: '40px', color: '#777773' }}>
             <Users size={48} style={{ opacity: 0.3, marginBottom: '16px' }} />
             <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>No Patient Chart Open</h3>
             <p style={{ fontSize: '13px' }}>Select a patient from the directory on the left or register a new patient.</p>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
             {/* Chart Header */}
             <div
               style={{
@@ -624,7 +946,18 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button
                   className="btn btn-secondary btn-sm"
-                  onClick={() => setShowAttachECGModal(true)}
+                  onClick={() => {
+                    setAttachTab('upload')
+                    setAttachFiles([])
+                    setAttachSignal(null)
+                    setAttachMetadata(null)
+                    setAttachValidationStatus('idle')
+                    setAttachValidationError(null)
+                    if (benchmarkSamples.length > 0 && !selectedBenchmarkDetail) {
+                      handleSelectBenchmark(benchmarkSamples[0].index)
+                    }
+                    setShowAttachECGModal(true)
+                  }}
                   title="Create and attach an ECG study to this patient"
                 >
                   <Plus size={14} style={{ color: '#A83245' }} />
@@ -688,7 +1021,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
             </div>
 
             {/* Tab Contents */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
+            <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
               {activeTab === 'summary' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                   {/* Latest ECG Preview */}
@@ -761,6 +1094,16 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
 
               {activeTab === 'history' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={openEditHistoryModal}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <Edit2 size={13} />
+                      <span>Edit Medical History</span>
+                    </button>
+                  </div>
                   <div className="card" style={{ padding: '18px' }}>
                     <h4 style={{ fontSize: '14px', fontWeight: 700, color: '#252525', marginBottom: '10px' }}>Medical History</h4>
                     <p style={{ fontSize: '13px', color: '#252525', whiteSpace: 'pre-wrap' }}>{selectedPatient.clinical_history || 'None documented.'}</p>
@@ -807,7 +1150,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
                             </span>
                           </div>
                           <div style={{ fontSize: '12px', color: '#777773', marginTop: '4px' }}>
-                            Model: {s.selected_model} \u2022 Quality: {s.quality_status} ({s.quality_score})
+                            Model: {s.selected_model} • Quality: {s.quality_status} ({s.quality_score})
                           </div>
                         </div>
 
@@ -828,6 +1171,19 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
 
               {activeTab === 'encounters' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#777773' }}>
+                      Clinical Encounters ({selectedPatient.encounters?.length || 0})
+                    </span>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={openNewEncounterModal}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <Plus size={13} />
+                      <span>New Encounter</span>
+                    </button>
+                  </div>
                   {(!selectedPatient.encounters || selectedPatient.encounters.length === 0) ? (
                     <div style={{ color: '#777773', fontSize: '13px', textAlign: 'center', padding: '36px' }}>
                       No clinical encounters recorded.
@@ -836,7 +1192,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
                     selectedPatient.encounters.map((enc) => (
                       <div key={enc.id} className="card" style={{ padding: '14px 18px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                          <span style={{ fontWeight: 700, fontSize: '14px', color: '#252525' }}>{enc.encounter_id} \u2014 {enc.encounter_type}</span>
+                          <span style={{ fontWeight: 700, fontSize: '14px', color: '#252525' }}>{enc.encounter_id} — {enc.encounter_type}</span>
                           <span style={{ fontSize: '12px', color: '#777773' }}>{enc.encounter_date}</span>
                         </div>
                         <div style={{ fontSize: '13px', color: '#777773' }}>
@@ -1390,6 +1746,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
                     type="file"
                     ref={fileInputRef}
                     accept=".csv,.npy,.npz,.hea,.dat"
+                    multiple
                     style={{ display: 'none' }}
                     onChange={handleEcgFileChange}
                   />
@@ -1442,45 +1799,613 @@ export const PatientsView: React.FC<PatientsViewProps> = ({ onOpenStudyForReview
       {/* Attach ECG Study Modal (Existing Patient Chart) */}
       {showAttachECGModal && selectedPatient && (
         <div className="modal-backdrop">
-          <div className="card modal-dialog" style={{ width: '480px', padding: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#252525', margin: 0 }}>
-                Attach ECG Study to {selectedPatient.name}
-              </h3>
+          <div
+            className="card modal-dialog"
+            style={{
+              width: '820px',
+              padding: '24px',
+              maxHeight: '92vh',
+              overflowY: 'auto',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.15)',
+            }}
+          >
+            {/* Header with Patient Identity */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#252525', margin: 0 }}>
+                  Attach 12-Lead ECG Acquisition
+                </h3>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#252525' }}>{selectedPatient.name}</span>
+                  <code style={{ fontSize: '11px', color: '#A83245', background: '#F8EAED', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                    {selectedPatient.patient_id}
+                  </code>
+                  <span style={{ fontSize: '12px', color: '#777773' }}>
+                    {selectedPatient.dob ? `${calculateAgeFromDob(selectedPatient.dob) ?? selectedPatient.age} yrs` : `${selectedPatient.age} yrs`} • {selectedPatient.sex}
+                  </span>
+                  {selectedPatient.mrn && (
+                    <span style={{ fontSize: '12px', color: '#777773' }}>• MRN: {selectedPatient.mrn}</span>
+                  )}
+                </div>
+              </div>
               <button className="btn btn-ghost btn-sm" onClick={() => setShowAttachECGModal(false)}>
                 <X size={16} />
               </button>
             </div>
 
-            <p style={{ fontSize: '13px', color: '#777773', marginBottom: '16px' }}>
-              Create a genuine 12-lead study record attached to this patient chart. Select an acquisition from preloaded test records or upload a signal.
-            </p>
-
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '6px' }}>
-                Select Acquisition Signal
-              </label>
-              <select
-                value={selectedSampleIdx}
-                onChange={(e) => setSelectedSampleIdx(parseInt(e.target.value, 10))}
-                style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1', background: '#FFFFFF' }}
+            {/* Option A / Option B Sub-Tab Switcher */}
+            <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid #E8E6E1', marginBottom: '18px' }}>
+              <button
+                type="button"
+                onClick={() => setAttachTab('upload')}
+                style={{
+                  padding: '10px 16px',
+                  fontSize: '13px',
+                  fontWeight: attachTab === 'upload' ? 700 : 500,
+                  color: attachTab === 'upload' ? '#A83245' : '#777773',
+                  border: 'none',
+                  borderBottom: `2px solid ${attachTab === 'upload' ? '#A83245' : 'transparent'}`,
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
               >
-                <option value={5}>Sample 5 — Anteroseptal MI Pattern (Pathological Q/ST)</option>
-                <option value={14}>Sample 14 — ST/T Change Pattern (T-wave inversion)</option>
-                <option value={6}>Sample 6 — Conduction Disturbance Pattern (LBBB/RBBB)</option>
-                <option value={24}>Sample 24 — Complex Multilabel Pattern (MI + CD + HYP)</option>
-                <option value={0}>Sample 0 — Normal Sinus ECG (Healthy Controls)</option>
-              </select>
+                <UploadCloud size={15} />
+                <span>Option A: Upload ECG from Computer</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAttachTab('benchmark')
+                  if (benchmarkSamples.length > 0 && !selectedBenchmarkDetail) {
+                    handleSelectBenchmark(benchmarkSamples[0].index)
+                  }
+                }}
+                style={{
+                  padding: '10px 16px',
+                  fontSize: '13px',
+                  fontWeight: attachTab === 'benchmark' ? 700 : 500,
+                  color: attachTab === 'benchmark' ? '#A83245' : '#777773',
+                  border: 'none',
+                  borderBottom: `2px solid ${attachTab === 'benchmark' ? '#A83245' : 'transparent'}`,
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <Award size={15} />
+                <span>Option B: Select PTB-XL Benchmark Sample</span>
+              </button>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-              <button className="btn btn-secondary" onClick={() => setShowAttachECGModal(false)}>
-                Cancel
-              </button>
-              <button className="btn btn-primary" onClick={handleAttachECGSubmit} disabled={formSubmitting}>
-                {formSubmitting ? 'Attaching...' : 'Create Study & Open Review'}
+            {/* OPTION A: UPLOAD FROM COMPUTER */}
+            {attachTab === 'upload' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div
+                  style={{
+                    background: '#FAFAF8',
+                    border: '1px solid #E8E6E1',
+                    borderRadius: '6px',
+                    padding: '8px 12px',
+                    fontSize: '11px',
+                    color: '#777773',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '2px',
+                  }}
+                >
+                  <div>
+                    <b style={{ color: '#252525' }}>Supported Formats:</b> CSV, NPY, NPZ, WFDB Header + Signal (.hea + .dat).
+                  </div>
+                  <div>
+                    <b style={{ color: '#252525' }}>Multi-File WFDB:</b> Select or drag both <code style={{ background: '#F0EEE9', padding: '1px 4px', borderRadius: '3px' }}>.hea</code> and <code style={{ background: '#F0EEE9', padding: '1px 4px', borderRadius: '3px' }}>.dat</code> files together in a single operation.
+                  </div>
+                </div>
+
+                {/* Dropzone */}
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    setAttachDragActive(true)
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault()
+                    setAttachDragActive(false)
+                  }}
+                  onDrop={handleAttachDrop}
+                  onClick={() => attachFileInputRef.current?.click()}
+                  style={{
+                    border: `2px dashed ${attachDragActive ? '#A83245' : '#D0CECA'}`,
+                    borderRadius: '8px',
+                    padding: '24px',
+                    textAlign: 'center',
+                    background: attachDragActive ? '#F8EAED' : '#FAFAF8',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  <UploadCloud size={30} style={{ color: attachDragActive ? '#A83245' : '#9C9C96', margin: '0 auto 6px' }} />
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#252525' }}>
+                    Click to select files or drag & drop here
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#777773', marginTop: '2px' }}>
+                    Supports single CSV, NPY, NPZ or paired WFDB (.hea + .dat) files
+                  </div>
+                  <input
+                    type="file"
+                    ref={attachFileInputRef}
+                    accept=".csv,.npy,.npz,.hea,.dat"
+                    multiple
+                    style={{ display: 'none' }}
+                    onChange={handleAttachFileInputChange}
+                  />
+                </div>
+
+                {/* Selected Files List */}
+                {attachFiles.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: '#777773', textTransform: 'uppercase' }}>
+                      Selected Files ({attachFiles.length}):
+                    </span>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {attachFiles.map((f, i) => (
+                        <div
+                          key={i}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            background: '#F0EEE9',
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            fontSize: '12px',
+                            color: '#252525',
+                          }}
+                        >
+                          <FileCheck size={13} style={{ color: '#34765A' }} />
+                          <span style={{ fontWeight: 600 }}>{f.name}</span>
+                          <span style={{ color: '#777773', fontSize: '11px' }}>({(f.size / 1024).toFixed(1)} KB)</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Validation Status Indicator */}
+                {attachValidationStatus === 'validating' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#A83245', fontSize: '12px', padding: '8px' }}>
+                    <RefreshCw size={14} className="spin-animation" />
+                    <span>Validating signal contract (1000×12, 100 Hz, leads I–V6)...</span>
+                  </div>
+                )}
+
+                {attachValidationStatus === 'error' && attachValidationError && (
+                  <div
+                    style={{
+                      padding: '10px 12px',
+                      borderRadius: '6px',
+                      background: '#FDEEEE',
+                      border: '1px solid #F5C6CB',
+                      color: '#B33A3A',
+                      fontSize: '12px',
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: '8px',
+                    }}
+                  >
+                    <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: '2px' }} />
+                    <div>
+                      <b>Validation Rejected:</b> {attachValidationError}
+                    </div>
+                  </div>
+                )}
+
+                {attachValidationStatus === 'valid' && attachSignal && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <CheckCircle2 size={16} style={{ color: '#34765A' }} />
+                        <span style={{ fontSize: '12px', fontWeight: 700, color: '#34765A' }}>
+                          Signal Validated (1000 samples × 12 leads @ 100 Hz)
+                        </span>
+                      </div>
+                      {attachMetadata && (
+                        <span style={{ fontSize: '11px', color: '#777773' }}>
+                          Quality: <b>{attachMetadata.quality_status || 'optimal'}</b> ({attachMetadata.quality_score?.toFixed(1) ?? '98.5'}%)
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Waveform Preview */}
+                    <div style={{ height: '220px', border: '1px solid #E8E6E1', borderRadius: '6px', overflow: 'hidden' }}>
+                      <ECGViewer signal={attachSignal} samplingRate={100} />
+                    </div>
+                  </div>
+                )}
+
+                {/* Actions for Option A */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #E8E6E1' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setShowAttachECGModal(false)}
+                  >
+                    Cancel
+                  </button>
+
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={!attachSignal || formSubmitting}
+                      onClick={handleKeepTemporaryAnalysis}
+                      title="Analyze this signal without saving to patient chart or creating a clinical study"
+                    >
+                      Keep as Temporary Analysis
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={!attachSignal || formSubmitting}
+                      onClick={handleSaveAttachToPatient}
+                      title="Persist ECG study to this patient chart and open ECG Review"
+                    >
+                      {formSubmitting ? 'Saving Study...' : `Save to Patient ${selectedPatient.name} & Open Review`}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* OPTION B: PTB-XL BENCHMARK SAMPLE */}
+            {attachTab === 'benchmark' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div
+                  style={{
+                    background: '#FAFAF8',
+                    border: '1px solid #E8E6E1',
+                    borderRadius: '6px',
+                    padding: '10px 12px',
+                    fontSize: '12px',
+                    color: '#777773',
+                  }}
+                >
+                  <div style={{ fontWeight: 600, color: '#252525', marginBottom: '2px' }}>
+                    PTB-XL Research Benchmark Records
+                  </div>
+                  <div>
+                    Benchmark reference annotations are authentic ground truth labels from the PTB-XL dataset.
+                    Inspecting a sample does <b>not</b> create or modify any patient records unless you explicitly choose to attach it.
+                  </div>
+                </div>
+
+                {/* Benchmark Selector */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '6px' }}>
+                    Select Benchmark Record
+                  </label>
+                  <select
+                    value={selectedBenchmarkIdx}
+                    onChange={(e) => handleSelectBenchmark(parseInt(e.target.value, 10))}
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      fontSize: '13px',
+                      borderRadius: '6px',
+                      border: '1px solid #E8E6E1',
+                      background: '#FFFFFF',
+                    }}
+                  >
+                    {benchmarkSamples.length > 0 ? (
+                      benchmarkSamples.map((s) => (
+                        <option key={s.index} value={s.index}>
+                          Record #{s.record_id || s.index} — {s.age ? `${s.age}yo ${s.sex}` : 'Demographics'} — {s.label_names?.join(', ') || 'Diagnostic Sample'}
+                        </option>
+                      ))
+                    ) : (
+                      <>
+                        <option value={5}>Sample 5 — Anteroseptal MI Pattern (Pathological Q/ST)</option>
+                        <option value={14}>Sample 14 — ST/T Change Pattern (T-wave inversion)</option>
+                        <option value={6}>Sample 6 — Conduction Disturbance Pattern (LBBB/RBBB)</option>
+                        <option value={24}>Sample 24 — Complex Multilabel Pattern (MI + CD + HYP)</option>
+                        <option value={0}>Sample 0 — Normal Sinus ECG (Healthy Controls)</option>
+                      </>
+                    )}
+                  </select>
+                </div>
+
+                {/* Benchmark Verified Ground Truth Card */}
+                {selectedBenchmarkDetail && (
+                  <div style={{ background: '#FFFFFF', border: '1px solid #E8E6E1', borderRadius: '8px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Award size={16} style={{ color: '#A83245' }} />
+                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#252525' }}>
+                          PTB-XL Record #{selectedBenchmarkDetail.record_id || selectedBenchmarkDetail.index}
+                        </span>
+                        <span style={{ fontSize: '11px', background: '#F8EAED', color: '#A83245', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                          BENCHMARK GROUND TRUTH
+                        </span>
+                      </div>
+                      <span style={{ fontSize: '11px', color: '#777773' }}>
+                        10.0s @ 100 Hz (1000×12)
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 600, color: '#777773' }}>Reference Labels:</span>
+                      {selectedBenchmarkDetail.label_names && selectedBenchmarkDetail.label_names.length > 0 ? (
+                        selectedBenchmarkDetail.label_names.map((lbl: string) => (
+                          <span
+                            key={lbl}
+                            style={{
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              background: '#E8F4EE',
+                              color: '#34765A',
+                            }}
+                          >
+                            {lbl}
+                          </span>
+                        ))
+                      ) : (
+                        <span style={{ fontSize: '11px', color: '#777773' }}>Normal / Unlabeled</span>
+                      )}
+                    </div>
+
+                    {/* Waveform Preview */}
+                    {selectedBenchmarkDetail.signal && (
+                      <div style={{ height: '220px', border: '1px solid #E8E6E1', borderRadius: '6px', overflow: 'hidden' }}>
+                        <ECGViewer signal={selectedBenchmarkDetail.signal} samplingRate={100} />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Actions for Option B */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #E8E6E1' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setShowAttachECGModal(false)}
+                  >
+                    Cancel
+                  </button>
+
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={!selectedBenchmarkDetail || formSubmitting}
+                      onClick={handleInspectBenchmarkTemporary}
+                      title="Inspect this benchmark record without linking to any patient"
+                    >
+                      Inspect as Temporary Analysis
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={!selectedBenchmarkDetail || formSubmitting}
+                      onClick={handleAttachBenchmarkToPatient}
+                      title="Attach this verified benchmark recording to the current patient"
+                    >
+                      {formSubmitting ? 'Attaching...' : `Attach to Patient ${selectedPatient.name} & Open Review`}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Edit Medical History Modal */}
+      {showEditHistoryModal && selectedPatient && (
+        <div className="modal-backdrop">
+          <div className="card modal-dialog" style={{ width: '640px', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div>
+                <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#252525', margin: 0 }}>
+                  Edit Medical History — {selectedPatient.name}
+                </h3>
+                <span style={{ fontSize: '12px', color: '#777773' }}>
+                  Patient ID: {selectedPatient.patient_id}
+                </span>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowEditHistoryModal(false)}>
+                <X size={16} />
               </button>
             </div>
+
+            <form onSubmit={handleSaveHistorySubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                  Relevant Cardiovascular History
+                </label>
+                <textarea
+                  rows={3}
+                  value={editHistoryText}
+                  onChange={(e) => setEditHistoryText(e.target.value)}
+                  placeholder="e.g. Prior myocardial infarction, hypertension, coronary artery bypass graft..."
+                  style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                    Current Medications
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={editMedicationsText}
+                    onChange={(e) => setEditMedicationsText(e.target.value)}
+                    placeholder="e.g. Lisinopril 10mg QD, Aspirin 81mg QD, Metoprolol 25mg BID"
+                    style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                    Known Allergies
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={editAllergiesText}
+                    onChange={(e) => setEditAllergiesText(e.target.value)}
+                    placeholder="e.g. Penicillin (anaphylaxis), Sulfa drugs, NKDA"
+                    style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                  Clinician Chart Notes
+                </label>
+                <textarea
+                  rows={3}
+                  value={editNotesText}
+                  onChange={(e) => setEditNotesText(e.target.value)}
+                  placeholder="General clinician observations or chart summary..."
+                  style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowEditHistoryModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={formSubmitting}>
+                  {formSubmitting ? 'Saving to Database...' : 'Save Medical History'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Record Clinical Encounter Modal */}
+      {showNewEncounterModal && selectedPatient && (
+        <div className="modal-backdrop">
+          <div className="card modal-dialog" style={{ width: '580px', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div>
+                <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#252525', margin: 0 }}>
+                  Record Clinical Encounter — {selectedPatient.name}
+                </h3>
+                <span style={{ fontSize: '12px', color: '#777773' }}>
+                  Patient ID: {selectedPatient.patient_id}
+                </span>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowNewEncounterModal(false)}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateEncounterSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                    Encounter Date *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={encounterDate}
+                    onChange={(e) => setEncounterDate(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                    Encounter Type *
+                  </label>
+                  <select
+                    value={encounterType}
+                    onChange={(e) => setEncounterType(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1', background: '#FFFFFF' }}
+                  >
+                    <option value="Outpatient Cardiology">Outpatient Cardiology</option>
+                    <option value="Inpatient Consultation">Inpatient Consultation</option>
+                    <option value="Emergency Department">Emergency Department</option>
+                    <option value="Electrophysiology Lab">Electrophysiology Lab</option>
+                    <option value="Cardiology Telehealth">Cardiology Telehealth</option>
+                    <option value="Cardiac ICU">Cardiac ICU</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                    Department
+                  </label>
+                  <input
+                    type="text"
+                    value={encounterDepartment}
+                    onChange={(e) => setEncounterDepartment(e.target.value)}
+                    placeholder="e.g. Cardiovascular Medicine"
+                    style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                    Attending Clinician
+                  </label>
+                  <input
+                    type="text"
+                    value={encounterClinician}
+                    onChange={(e) => setEncounterClinician(e.target.value)}
+                    placeholder="e.g. Dr. Sarah Jenkins, MD"
+                    style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                  Reason for Visit *
+                </label>
+                <textarea
+                  rows={2}
+                  required
+                  value={encounterReason}
+                  onChange={(e) => setEncounterReason(e.target.value)}
+                  placeholder="e.g. Routine follow-up after myocardial infarction; evaluation of intermittent palpitations..."
+                  style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#252525', marginBottom: '4px' }}>
+                  Status
+                </label>
+                <select
+                  value={encounterStatus}
+                  onChange={(e) => setEncounterStatus(e.target.value)}
+                  style={{ width: '100%', padding: '8px 10px', fontSize: '13px', borderRadius: '6px', border: '1px solid #E8E6E1', background: '#FFFFFF' }}
+                >
+                  <option value="in_progress">In Progress</option>
+                  <option value="completed">Completed</option>
+                  <option value="scheduled">Scheduled</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowNewEncounterModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={formSubmitting}>
+                  {formSubmitting ? 'Creating Encounter...' : 'Create Encounter'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

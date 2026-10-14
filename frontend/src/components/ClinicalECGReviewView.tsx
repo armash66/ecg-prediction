@@ -165,9 +165,9 @@ export const ClinicalECGReviewView: React.FC<ClinicalECGReviewViewProps> = ({
   }, [selectedStudyId])
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    await uploadAndValidateFile(file)
+    const files = e.target.files ? Array.from(e.target.files) : []
+    if (files.length === 0) return
+    await uploadAndValidateFile(files.length > 1 ? files : files[0])
     e.target.value = ''
   }
 
@@ -327,7 +327,8 @@ export const ClinicalECGReviewView: React.FC<ClinicalECGReviewViewProps> = ({
       <input
         ref={fileInputRef}
         type="file"
-        accept=".csv,.npy,.npz,.hea"
+        multiple
+        accept=".csv,.npy,.npz,.hea,.dat"
         style={{ display: 'none' }}
         onChange={handleFileUpload}
       />

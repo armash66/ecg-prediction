@@ -94,7 +94,7 @@ export const ModelLabView: React.FC<ModelLabViewProps> = ({
   }
 
   return (
-    <div className="page-container">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%' }}>
       {/* Disclaimer */}
       <DisclaimerBanner />
 

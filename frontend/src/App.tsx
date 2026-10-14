@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useRef, useEffect } from 'react'
 import { AnalysisProvider, useAnalysis } from './context/AnalysisContext'
 import { NavigationTab } from './types'
 import { Sidebar } from './components/Sidebar'
@@ -128,6 +128,15 @@ const AppContent: React.FC = () => {
     subtitle: 'Clinical Review & Documentation Assistant',
   }
 
+  const mainRef = useRef<HTMLDivElement | null>(null)
+
+  // Reset scroll position to top whenever navigating between pages
+  useEffect(() => {
+    if (mainRef.current) {
+      mainRef.current.scrollTop = 0
+    }
+  }, [currentTab])
+
   return (
     <div className="app-container">
       <Sidebar
@@ -136,7 +145,7 @@ const AppContent: React.FC = () => {
         health={health}
       />
 
-      <div className="app-main">
+      <div ref={mainRef} className="app-main">
         <Header
           title={tabMeta.title}
           subtitle={tabMeta.subtitle}
@@ -147,7 +156,7 @@ const AppContent: React.FC = () => {
           onOpenReview={() => setCurrentTab('ecg_review')}
         />
 
-        <main className="page-container" style={{ padding: '24px 32px' }}>
+        <main className="page-container" style={{ padding: '24px 32px 80px' }}>
           {/* Primary Clinical Navigation Views */}
           {currentTab === 'clinical_overview' && (
             <ClinicalOverviewView

@@ -31,7 +31,7 @@ if SRC_DIR not in sys.path:
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-import scipy.signal
+import scipy.signal  # type: ignore
 
 from ecg_intelligence import CLASSES, LEADS, CLASS_NAMES, FS
 from ecg_intelligence.models.classifier import build_torch_model
@@ -55,6 +55,11 @@ from server.clinical_db import (
     create_patient,
     update_patient,
     delete_patient,
+    list_encounters,
+    get_encounter_detail,
+    create_encounter,
+    update_encounter,
+    delete_encounter,
     list_ecg_studies,
     get_ecg_study_detail,
     create_ecg_study,
@@ -581,6 +586,25 @@ class PatientUpdateRequest(BaseModel):
     status: Optional[str] = None
 
 
+class EncounterCreateRequest(BaseModel):
+    patient_id: str
+    encounter_date: Optional[str] = None
+    encounter_type: Optional[str] = "Outpatient Cardiology"
+    department: Optional[str] = "Cardiovascular Medicine"
+    attending_clinician: Optional[str] = "Attending Clinician"
+    reason_for_visit: Optional[str] = "Cardiac assessment and ECG evaluation"
+    status: Optional[str] = "in_progress"
+
+
+class EncounterUpdateRequest(BaseModel):
+    encounter_date: Optional[str] = None
+    encounter_type: Optional[str] = None
+    department: Optional[str] = None
+    attending_clinician: Optional[str] = None
+    reason_for_visit: Optional[str] = None
+    status: Optional[str] = None
+
+
 class StudyCreateRequest(BaseModel):
     patient_id: str
     encounter_id: Optional[str] = None
@@ -986,30 +1010,65 @@ async def validate_ecg_upload(request: Request):
 
         elif "multipart/form-data" in content_type:
             form = await request.form()
-            file = form.get("file")
-            dat_file = form.get("dat_file")
+            all_uploads = []
+            for k, v in form.multi_items():
+                if hasattr(v, "read") and hasattr(v, "filename"):
+                    all_uploads.append(v)
 
-            if file is None or not hasattr(file, "read"):
-                raise ValueError("No file uploaded in form field 'file'.")
+            if not all_uploads:
+                raise ValueError("No file uploaded in form submission.")
 
-            filename = getattr(file, "filename", "upload") or "upload"
-            ext = os.path.splitext(filename)[1].lower()
-            content = await file.read()
+            # Map uploads by extension
+            hea_uploads = [u for u in all_uploads if (getattr(u, "filename", "") or "").lower().endswith(".hea")]
+            dat_uploads = [u for u in all_uploads if (getattr(u, "filename", "") or "").lower().endswith(".dat")]
+            csv_uploads = [u for u in all_uploads if (getattr(u, "filename", "") or "").lower().endswith(".csv")]
+            npy_uploads = [u for u in all_uploads if (getattr(u, "filename", "") or "").lower().endswith(".npy")]
+            npz_uploads = [u for u in all_uploads if (getattr(u, "filename", "") or "").lower().endswith(".npz")]
 
-            if ext == ".csv":
+            if hea_uploads:
+                hea_file = hea_uploads[0]
+                hea_fn = getattr(hea_file, "filename", "record.hea") or "record.hea"
+                hea_content = await hea_file.read()
+
+                if not dat_uploads:
+                    raise ValueError(
+                        f"WFDB header (.hea) detected for '{hea_fn}', but referenced signal file (.dat) was not uploaded. "
+                        "Please select or drag both the .hea and .dat files together."
+                    )
+
+                dat_dict = {}
+                for du in dat_uploads:
+                    fn = getattr(du, "filename", "record.dat") or "record.dat"
+                    dat_dict[os.path.basename(fn)] = await du.read()
+
+                record_base = os.path.splitext(os.path.basename(hea_fn))[0]
+                arr, meta = parse_wfdb_record(hea_content, dat_dict, record_name=record_base)
+                filename = hea_fn
+            elif dat_uploads and not hea_uploads:
+                dat_fn = getattr(dat_uploads[0], "filename", "record.dat")
+                raise ValueError(
+                    f"WFDB signal file '{dat_fn}' was uploaded without its corresponding .hea header file. "
+                    "A WFDB recording requires both the .hea header file and the .dat signal file. Please upload both files together."
+                )
+            elif csv_uploads:
+                csv_file = csv_uploads[0]
+                filename = getattr(csv_file, "filename", "record.csv")
+                content = await csv_file.read()
                 arr, meta = parse_csv_ecg(content)
-            elif ext == ".npy":
+            elif npy_uploads:
+                npy_file = npy_uploads[0]
+                filename = getattr(npy_file, "filename", "record.npy")
+                content = await npy_file.read()
                 arr, meta = parse_numpy_ecg(content, is_npz=False)
-            elif ext == ".npz":
+            elif npz_uploads:
+                npz_file = npz_uploads[0]
+                filename = getattr(npz_file, "filename", "record.npz")
+                content = await npz_file.read()
                 arr, meta = parse_numpy_ecg(content, is_npz=True)
-            elif ext == ".hea":
-                if dat_file is None or not hasattr(dat_file, "read"):
-                    raise ValueError("WFDB .hea header upload requires matching .dat signal file in 'dat_file'.")
-                dat_content = await dat_file.read()
-                record_base = os.path.splitext(filename)[0]
-                arr, meta = parse_wfdb_record(content, dat_content, record_name=record_base)
             else:
-                raise ValueError(f"Unsupported file format '{ext}'. Supported formats: .csv, .npy, .npz, .hea/.dat")
+                first_fn = getattr(all_uploads[0], "filename", "unknown")
+                ext = os.path.splitext(first_fn)[1].lower()
+                raise ValueError(f"Unsupported file format '{ext}'. Supported formats: .csv, .npy, .npz, and WFDB (.hea + .dat).")
 
             quality = analyze_signal_quality(arr)
             meta["filename"] = filename
@@ -1138,7 +1197,7 @@ def analyze_ecg(req: AnalyzeRequest):
             "name": CLASS_NAMES.get(c, c),
             "probability": prob,
             "threshold": t,
-            "detected": bool(prob >= t),
+            "detected": (prob >= t),
         })
 
     # Note: Keep predictions array in exact CLASSES order ('CD', 'HYP', 'MI', 'NORM', 'STTC')
@@ -2284,6 +2343,72 @@ def api_delete_patient(patient_id: str):
     if not ok:
         raise HTTPException(status_code=404, detail=f"Patient '{patient_id}' not found.")
     return {"status": "success", "message": f"Patient '{patient_id}' and all associated records deleted."}
+
+
+@app.get("/api/encounters")
+def api_list_encounters(patient_id: Optional[str] = None):
+    """
+    Returns authentic clinical encounters from SQLite, optionally filtered by patient.
+    """
+    try:
+        encs = list_encounters(DB_PATH, patient_id=patient_id)
+        return {"total": len(encs), "encounters": encs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to query encounters: {str(e)}")
+
+
+@app.get("/api/encounters/{encounter_id}")
+def api_get_encounter(encounter_id: str):
+    """
+    Retrieves a single clinical encounter with its associated ECG studies and notes.
+    """
+    enc = get_encounter_detail(DB_PATH, encounter_id)
+    if not enc:
+        raise HTTPException(status_code=404, detail=f"Encounter '{encounter_id}' not found.")
+    return enc
+
+
+@app.post("/api/encounters")
+def api_create_encounter(req: EncounterCreateRequest):
+    """
+    Creates an encounter attached to a patient with persistent validation.
+    """
+    try:
+        data = _dump_model(req)
+        enc = create_encounter(DB_PATH, req.patient_id, data)
+        return enc
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create encounter: {str(e)}")
+
+
+@app.put("/api/encounters/{encounter_id}")
+def api_update_encounter(encounter_id: str, req: EncounterUpdateRequest):
+    """
+    Updates encounter fields (date, type, department, clinician, reason, status).
+    """
+    try:
+        updates = {k: v for k, v in _dump_model(req).items() if v is not None}
+        updated = update_encounter(DB_PATH, encounter_id, updates)
+        if not updated:
+            raise HTTPException(status_code=404, detail=f"Encounter '{encounter_id}' not found.")
+        return updated
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update encounter: {str(e)}")
+
+
+@app.delete("/api/encounters/{encounter_id}")
+def api_delete_encounter(encounter_id: str):
+    """
+    Deletes an encounter safely.
+    """
+    ok = delete_encounter(DB_PATH, encounter_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Encounter '{encounter_id}' not found.")
+    return {"status": "success", "message": f"Encounter '{encounter_id}' deleted."}
 
 
 @app.get("/api/studies")

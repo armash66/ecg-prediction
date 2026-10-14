@@ -43,6 +43,18 @@
   padding: 0;
 }
 
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+#root {
+  height: 100%;
+  width: 100%;
+}
+
 body {
   font-family: var(--font-sans);
   background-color: var(--bg-primary);
@@ -50,7 +62,6 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  min-height: 100vh;
 }
 
 button, input, select, textarea {
@@ -64,7 +75,9 @@ button, input, select, textarea {
 /* App Shell Layout */
 .app-container {
   display: flex;
-  min-height: 100vh;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
 }
 
 /* Left Sidebar */
@@ -75,9 +88,7 @@ button, input, select, textarea {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  position: sticky;
-  top: 0;
-  height: 100vh;
+  height: 100%;
   z-index: 40;
 }
 
@@ -204,9 +215,35 @@ button, input, select, textarea {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  height: 100vh;
-  overflow-y: auto;
+  height: 100%;
+  overflow-y: scroll;
+  overflow-x: hidden;
   position: relative;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #A8A59F #EDEBE6;
+}
+
+/* Distinct, always-visible scrollbar */
+.app-main::-webkit-scrollbar {
+  width: 12px;
+}
+
+.app-main::-webkit-scrollbar-track {
+  background: #EDEBE6;
+  border-left: 1px solid #DFDDD7;
+}
+
+.app-main::-webkit-scrollbar-thumb {
+  background-color: #A8A59F;
+  border-radius: 6px;
+  border: 2px solid #EDEBE6;
+}
+
+.app-main::-webkit-scrollbar-thumb:hover {
+  background-color: #7E7C77;
 }
 
 /* Header */
@@ -221,6 +258,7 @@ button, input, select, textarea {
   position: sticky;
   top: 0;
   z-index: 30;
+  flex-shrink: 0;
 }
 
 .header-title-area {
@@ -262,13 +300,14 @@ button, input, select, textarea {
 
 /* Page Container */
 .page-container {
-  padding: 32px;
+  padding: 24px 32px 80px;
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 24px;
+  flex-grow: 1;
 }
 
 /* Research Disclaimer */
@@ -688,10 +727,35 @@ button, input, select, textarea {
     padding: 10px;
   }
   .page-container {
-    padding: 20px 16px;
+    padding: 20px 16px 80px;
   }
   .app-header {
     padding: 0 16px;
   }
 }
+
+/* Modal Backdrop & Dialog System */
+.modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.modal-dialog {
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  max-width: 95vw;
+}
+
 

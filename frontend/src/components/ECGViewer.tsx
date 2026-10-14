@@ -4,6 +4,8 @@ import {
   ZoomOut,
   RotateCcw,
   Eye,
+  HelpCircle,
+  X,
 } from 'lucide-react'
 
 interface ECGViewerProps {
@@ -37,6 +39,7 @@ export const ECGViewer: React.FC<ECGViewerProps> = ({
   const [selectedLead, setSelectedLead] = useState<number>(1) // Lead II default for single mode
   const [timeZoom, setTimeZoom] = useState<number>(1.0) // 1.0 = full 10s, 2.0 = 5s, etc.
   const [panOffset, setPanOffset] = useState<number>(0.0) // in seconds
+  const [showRhythmHelp, setShowRhythmHelp] = useState<boolean>(false)
 
   // Measured container dimensions to prevent progressive dimension jumps or reflow
   const [dimensions, setDimensions] = useState<{ width: number; height: number }>({ width: 0, height: 0 })
@@ -274,10 +277,12 @@ export const ECGViewer: React.FC<ECGViewerProps> = ({
         const blockY = r * rowHeight
         const centerY = blockY + rowHeight / 2
 
-        // Lead label
-        ctx.fillStyle = '#252525'
-        ctx.font = '600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-        ctx.fillText(leadName, blockX + 8, blockY + 16)
+        // Lead label with pill backdrop to guarantee crisp visibility in every column
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.92)'
+        ctx.fillRect(blockX + 4, blockY + 4, 34, 18)
+        ctx.fillStyle = '#1B1B18'
+        ctx.font = '700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+        ctx.fillText(leadName, blockX + 8, blockY + 17)
 
         // Time window for this column (2.5s per column in standard 3x4 print)
         const colStartSec = c * 2.5
@@ -333,10 +338,18 @@ export const ECGViewer: React.FC<ECGViewerProps> = ({
     const rhythmLeadIdx = 1 // Lead II
     const pxPerMvRhythm = Math.min(42, (rhythmHeight / 2) * 0.7)
 
-    // Label
-    ctx.fillStyle = '#777773'
+    // Label with solid backdrop pill to prevent waveform collision
+    const rhythmLabel = 'Rhythm Strip · Lead II · Continuous 10 s · 25 mm/s · 10 mm/mV'
     ctx.font = '600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-    ctx.fillText('Rhythm Strip: Lead II (Continuous 10s @ 25 mm/s, 10 mm/mV)', 8, gridHeight + 16)
+    const labelWidth = ctx.measureText(rhythmLabel).width
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.94)'
+    ctx.fillRect(6, gridHeight + 4, labelWidth + 12, 18)
+    ctx.strokeStyle = '#E8E6E1'
+    ctx.lineWidth = 1
+    ctx.strokeRect(6, gridHeight + 4, labelWidth + 12, 18)
+
+    ctx.fillStyle = '#444440'
+    ctx.fillText(rhythmLabel, 12, gridHeight + 17)
 
     // Attribution highlight for rhythm strip
     if (attr && attr[rhythmLeadIdx]) {
@@ -642,7 +655,31 @@ export const ECGViewer: React.FC<ECGViewerProps> = ({
         </div>
 
         {/* Action Toggles & Zoom */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          {hoverCursor && (
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '3px 8px',
+                background: '#F8EAED',
+                border: '1px solid #E8D2CF',
+                borderRadius: '4px',
+                fontSize: '0.73rem',
+                color: '#A83245',
+                fontWeight: 600,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              <span>Lead: <strong>{leads[hoverCursor.leadIdx] || hoverCursor.leadIdx + 1}</strong></span>
+              <span>&bull;</span>
+              <span>t: <strong>{hoverCursor.timeSec.toFixed(2)}s</strong></span>
+              <span>&bull;</span>
+              <span>{hoverCursor.valMv > 0 ? `+${hoverCursor.valMv}` : hoverCursor.valMv} mV</span>
+            </div>
+          )}
+
           {processedSignal && onToggleProcessed && (
             <button
               className={`btn btn-sm ${showProcessed ? 'btn-primary' : 'btn-secondary'}`}
@@ -690,6 +727,98 @@ export const ECGViewer: React.FC<ECGViewerProps> = ({
         </div>
       </div>
 
+      {/* 4-Column Layout Header Guide (Standard 12-lead clinical mode) */}
+      {layoutMode === 'clinical' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(4, 1fr) auto',
+              alignItems: 'center',
+              background: '#F8F7F4',
+              border: '1px solid #E8E6E1',
+              borderRadius: '6px',
+              padding: '4px 8px',
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              color: '#444440',
+              textAlign: 'center',
+              gap: '4px',
+            }}
+          >
+            <div style={{ borderRight: '1px solid #E8E6E1', padding: '2px 0' }}>Col 1: I, II, III (0.0s – 2.5s)</div>
+            <div style={{ borderRight: '1px solid #E8E6E1', padding: '2px 0' }}>Col 2: aVR, aVL, aVF (2.5s – 5.0s)</div>
+            <div style={{ borderRight: '1px solid #E8E6E1', padding: '2px 0' }}>Col 3: V1, V2, V3 (5.0s – 7.5s)</div>
+            <div style={{ padding: '2px 0' }}>Col 4: V4, V5, V6 (7.5s – 10.0s)</div>
+            <div style={{ borderLeft: '1px solid #E8E6E1', paddingLeft: '8px' }}>
+              <button
+                type="button"
+                onClick={() => setShowRhythmHelp((prev) => !prev)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  background: showRhythmHelp ? '#E1EBF5' : 'transparent',
+                  border: '1px solid #C8DDF2',
+                  borderRadius: '4px',
+                  color: '#1B4D89',
+                  padding: '2px 7px',
+                  fontSize: '0.70rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }}
+                title="Clinical rhythm strip & 12-lead layout guide"
+              >
+                <HelpCircle size={12} />
+                <span>Rhythm Strip Info</span>
+              </button>
+            </div>
+          </div>
+
+          {showRhythmHelp && (
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'flex-start',
+                padding: '8px 12px',
+                background: '#F0F6FC',
+                border: '1px solid #C8DDF2',
+                borderRadius: '6px',
+                fontSize: '0.74rem',
+                color: '#1B4D89',
+                lineHeight: 1.45,
+              }}
+            >
+              <div>
+                <strong>Clinical Rhythm Strip & 12-Lead Layout:</strong>
+                <div>
+                  The upper panel displays all 12 diagnostic leads arranged in 4 sequential columns of 2.5 seconds each (totaling 10 seconds across).
+                  The bottom strip displays <strong>Lead II continuously for the entire 10 seconds</strong> for continuous rhythm inspection, allowing clinicians to evaluate rate regularity, sinus rhythm, pauses, and premature complexes without disruption from column lead switches.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRhythmHelp(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: '#1B4D89',
+                  padding: '2px',
+                  marginLeft: '8px',
+                  flexShrink: 0,
+                }}
+                aria-label="Close rhythm strip info"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Canvas Area with Position Relative */}
       <div
         ref={containerRef}
@@ -702,11 +831,12 @@ export const ECGViewer: React.FC<ECGViewerProps> = ({
           overflow: 'hidden',
           border: '1px solid #E8E6E1',
           background: '#FFFFFF',
+          touchAction: 'pan-y',
         }}
       >
         <canvas
           ref={canvasRef}
-          style={{ width: '100%', height: '100%', display: 'block' }}
+          style={{ width: '100%', height: '100%', display: 'block', touchAction: 'pan-y' }}
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
         />
@@ -727,33 +857,43 @@ export const ECGViewer: React.FC<ECGViewerProps> = ({
           />
         )}
 
-        {/* Live Hover Readout Badge */}
-        {hoverCursor && (
-          <div
-            style={{
-              position: 'absolute',
-              top: '10px',
-              right: '12px',
-              backgroundColor: 'rgba(255, 255, 255, 0.95)',
-              border: '1px solid #E8E6E1',
-              borderRadius: '6px',
-              padding: '4px 10px',
-              fontSize: '0.75rem',
-              color: '#252525',
-              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-              pointerEvents: 'none',
-              fontVariantNumeric: 'tabular-nums',
-              zIndex: 10,
-            }}
-          >
-            <span>Lead: <strong>{leads[hoverCursor.leadIdx] || hoverCursor.leadIdx + 1}</strong></span>
-            <span>Time: <strong>{hoverCursor.timeSec.toFixed(2)} s</strong></span>
-            <span>Amplitude: <strong>{hoverCursor.valMv > 0 ? `+${hoverCursor.valMv}` : hoverCursor.valMv} mV</strong></span>
-          </div>
-        )}
+        {/* Dynamic Hover Cursor Tooltip (Smart vertical flip so it never covers waveform features) */}
+        {hoverCursor && (() => {
+          const isLowerHalf = hoverCursor.yPx > (dimensions.height || 440) / 2
+          const tooltipTop = isLowerHalf
+            ? Math.max(10, hoverCursor.yPx - 36)
+            : Math.min(Math.max(10, hoverCursor.yPx + 14), (dimensions.height || 440) - 34)
+          const tooltipLeft = Math.min(Math.max(10, hoverCursor.xPx + 14), (dimensions.width || 800) - 180)
+
+          return (
+            <div
+              style={{
+                position: 'absolute',
+                left: `${tooltipLeft}px`,
+                top: `${tooltipTop}px`,
+                backgroundColor: 'rgba(33, 33, 33, 0.92)',
+                color: '#FFFFFF',
+                borderRadius: '4px',
+                padding: '3px 8px',
+                fontSize: '0.72rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                pointerEvents: 'none',
+                fontVariantNumeric: 'tabular-nums',
+                zIndex: 10,
+                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.18)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <span style={{ color: '#FFB3BA', fontWeight: 700 }}>
+                {leads[hoverCursor.leadIdx] || hoverCursor.leadIdx + 1}
+              </span>
+              <span>{hoverCursor.timeSec.toFixed(2)}s</span>
+              <span>{hoverCursor.valMv > 0 ? `+${hoverCursor.valMv}` : hoverCursor.valMv} mV</span>
+            </div>
+          )
+        })()}
       </div>
 
       {/* Legend & Grid Specification */}

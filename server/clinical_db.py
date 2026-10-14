@@ -667,6 +667,161 @@ def delete_patient(db_path: str, patient_id_or_uid: str) -> bool:
 
 
 # ==============================================================================
+# ENCOUNTERS MANAGEMENT SERVICE
+# ==============================================================================
+
+def list_encounters(db_path: str, patient_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    conn = get_db_connection(db_path)
+    cur = conn.cursor()
+
+    sql = """
+    SELECT e.*, p.name AS patient_name, p.patient_id AS patient_display_id, p.mrn AS patient_mrn
+    FROM encounters e
+    JOIN patients p ON e.patient_id = p.id
+    WHERE 1=1
+    """
+    params = []
+    if patient_id:
+        sql += " AND (e.patient_id = ? OR p.patient_id = ?)"
+        params.extend([patient_id, patient_id])
+
+    sql += " ORDER BY e.encounter_date DESC, e.created_at DESC"
+    cur.execute(sql, params)
+    encounters = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return encounters
+
+
+def get_encounter_detail(db_path: str, encounter_id_or_uid: str) -> Optional[Dict[str, Any]]:
+    conn = get_db_connection(db_path)
+    cur = conn.cursor()
+
+    cur.execute("""
+    SELECT e.*, p.name AS patient_name, p.patient_id AS patient_display_id, p.mrn AS patient_mrn
+    FROM encounters e
+    JOIN patients p ON e.patient_id = p.id
+    WHERE e.id = ? OR e.encounter_id = ?
+    """, (encounter_id_or_uid, encounter_id_or_uid))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return None
+
+    enc = dict(row)
+    cur.execute("""
+    SELECT id, study_id, recorded_at, status, selected_model, flags_json
+    FROM ecg_studies WHERE encounter_id = ? ORDER BY recorded_at DESC
+    """, (enc["id"],))
+    studies_rows = cur.fetchall()
+    enc["studies"] = []
+    for s in studies_rows:
+        sd = dict(s)
+        sd["flags"] = json.loads(sd.get("flags_json") or "[]")
+        enc["studies"].append(sd)
+
+    conn.close()
+    return enc
+
+
+def create_encounter(db_path: str, patient_id_or_uid: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    conn = get_db_connection(db_path)
+    cur = conn.cursor()
+
+    cur.execute("SELECT id, patient_id FROM patients WHERE id = ? OR patient_id = ?", (patient_id_or_uid, patient_id_or_uid))
+    pat = cur.fetchone()
+    if not pat:
+        conn.close()
+        raise ValueError(f"Patient '{patient_id_or_uid}' not found.")
+
+    pat_uid = pat["id"]
+    uid = str(uuid.uuid4())
+    now = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+    today_str = time.strftime("%Y-%m-%d", time.gmtime())
+
+    cur.execute("SELECT COUNT(*) AS cnt FROM encounters;")
+    next_seq = cur.fetchone()["cnt"] + 1
+    while True:
+        enc_code = f"ENC-2026-{next_seq:04d}"
+        cur.execute("SELECT id FROM encounters WHERE encounter_id = ?", (enc_code,))
+        if not cur.fetchone():
+            break
+        next_seq += 1
+
+    enc_date = (data.get("encounter_date") or "").strip() or today_str
+    enc_type = (data.get("encounter_type") or "").strip() or "Outpatient Cardiology"
+    dept = (data.get("department") or "").strip() or "Cardiovascular Medicine"
+    clinician = (data.get("attending_clinician") or "").strip() or "Attending Clinician"
+    reason = (data.get("reason_for_visit") or "").strip() or "Cardiac assessment and ECG evaluation"
+    status = (data.get("status") or "").strip() or "in_progress"
+
+    cur.execute("""
+    INSERT INTO encounters (
+        id, encounter_id, patient_id, encounter_date, encounter_type,
+        department, attending_clinician, reason_for_visit, status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (uid, enc_code, pat_uid, enc_date, enc_type, dept, clinician, reason, status, now, now))
+
+    conn.commit()
+    conn.close()
+    detail = get_encounter_detail(db_path, uid)
+    if not detail:
+        raise ValueError("Failed to retrieve created encounter.")
+    return detail
+
+
+def update_encounter(db_path: str, encounter_id_or_uid: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    conn = get_db_connection(db_path)
+    cur = conn.cursor()
+
+    cur.execute("SELECT id FROM encounters WHERE id = ? OR encounter_id = ?", (encounter_id_or_uid, encounter_id_or_uid))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return None
+    uid = row["id"]
+
+    now = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+    fields = []
+    params = []
+    allowed = ["encounter_date", "encounter_type", "department", "attending_clinician", "reason_for_visit", "status"]
+    for k in allowed:
+        if k in updates and updates[k] is not None:
+            fields.append(f"{k} = ?")
+            params.append(updates[k])
+
+    if not fields:
+        conn.close()
+        return get_encounter_detail(db_path, uid)
+
+    fields.append("updated_at = ?")
+    params.append(now)
+    params.append(uid)
+
+    cur.execute(f"UPDATE encounters SET {', '.join(fields)} WHERE id = ?", params)
+    conn.commit()
+    conn.close()
+    return get_encounter_detail(db_path, uid)
+
+
+def delete_encounter(db_path: str, encounter_id_or_uid: str) -> bool:
+    conn = get_db_connection(db_path)
+    cur = conn.cursor()
+
+    cur.execute("SELECT id FROM encounters WHERE id = ? OR encounter_id = ?", (encounter_id_or_uid, encounter_id_or_uid))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return False
+    uid = row["id"]
+
+    cur.execute("DELETE FROM encounters WHERE id = ?", (uid,))
+    conn.commit()
+    deleted = cur.rowcount > 0
+    conn.close()
+    return deleted
+
+
+# ==============================================================================
 # ECG STUDIES & WORKLIST SERVICE
 # ==============================================================================
 

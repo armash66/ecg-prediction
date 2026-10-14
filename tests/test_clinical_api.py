@@ -396,3 +396,111 @@ def test_ptbxl_dataset_test_bench_and_held_out_evaluation():
     assert len(anl["lead_importance"]) == 12
     assert "attribution notice" in anl["plain_language_explanation"].lower()
 
+
+def test_encounter_lifecycle():
+    # 1. Get a patient
+    pats_res = client.get("/api/patients")
+    assert pats_res.status_code == 200
+    target_patient = pats_res.json()["patients"][0]
+    pat_id = target_patient["id"]
+
+    # 2. Create Encounter
+    enc_payload = {
+        "patient_id": pat_id,
+        "encounter_date": "2026-10-14",
+        "encounter_type": "Outpatient Cardiology",
+        "department": "Cardiovascular Medicine",
+        "attending_clinician": "Dr. Sarah Jenkins, MD",
+        "reason_for_visit": "Post-MI follow-up and symptom review",
+        "status": "in_progress",
+    }
+    create_res = client.post("/api/encounters", json=enc_payload)
+    assert create_res.status_code == 200
+    enc = create_res.json()
+    enc_id = enc["id"]
+    assert enc["encounter_id"].startswith("ENC-2026-")
+    assert enc["patient_id"] == pat_id
+    assert enc["status"] == "in_progress"
+
+    # 3. Retrieve Encounter Detail
+    detail_res = client.get(f"/api/encounters/{enc_id}")
+    assert detail_res.status_code == 200
+    detail = detail_res.json()
+    assert detail["id"] == enc_id
+    assert detail["reason_for_visit"] == "Post-MI follow-up and symptom review"
+
+    # 4. List Encounters Filtered by Patient
+    list_res = client.get(f"/api/encounters?patient_id={pat_id}")
+    assert list_res.status_code == 200
+    enc_list = list_res.json()["encounters"]
+    assert any(e["id"] == enc_id for e in enc_list)
+
+    # 5. Update Encounter
+    update_res = client.put(f"/api/encounters/{enc_id}", json={
+        "status": "completed",
+        "reason_for_visit": "Follow-up complete; patient stable.",
+    })
+    assert update_res.status_code == 200
+    updated = update_res.json()
+    assert updated["status"] == "completed"
+    assert updated["reason_for_visit"] == "Follow-up complete; patient stable."
+
+    # 6. Verify in Patient Detail
+    pat_detail_res = client.get(f"/api/patients/{pat_id}")
+    assert pat_detail_res.status_code == 200
+    pat_detail = pat_detail_res.json()
+    assert any(e["id"] == enc_id for e in pat_detail.get("encounters", []))
+
+    # 7. Delete Encounter
+    del_res = client.delete(f"/api/encounters/{enc_id}")
+    assert del_res.status_code == 200
+    assert client.get(f"/api/encounters/{enc_id}").status_code == 404
+
+
+def test_wfdb_paired_upload_validation():
+    # 1. Create a paired WFDB header and dat file
+    record_name = "test_paired_rec"
+    hea_content = (
+        f"{record_name} 12 100 1000\n"
+        f"{record_name}.dat 16 1000.0/mV 16 0 0 0 0 I\n"
+        f"{record_name}.dat 16 1000.0/mV 16 0 0 0 0 II\n"
+        f"{record_name}.dat 16 1000.0/mV 16 0 0 0 0 III\n"
+        f"{record_name}.dat 16 1000.0/mV 16 0 0 0 0 aVR\n"
+        f"{record_name}.dat 16 1000.0/mV 16 0 0 0 0 aVL\n"
+        f"{record_name}.dat 16 1000.0/mV 16 0 0 0 0 aVF\n"
+        f"{record_name}.dat 16 1000.0/mV 16 0 0 0 0 V1\n"
+        f"{record_name}.dat 16 1000.0/mV 16 0 0 0 0 V2\n"
+        f"{record_name}.dat 16 1000.0/mV 16 0 0 0 0 V3\n"
+        f"{record_name}.dat 16 1000.0/mV 16 0 0 0 0 V4\n"
+        f"{record_name}.dat 16 1000.0/mV 16 0 0 0 0 V5\n"
+        f"{record_name}.dat 16 1000.0/mV 16 0 0 0 0 V6\n"
+    ).encode("ascii")
+
+    # Generate 1000 samples x 12 leads int16
+    sig_int16 = (np.sin(np.linspace(0, 10, 1000 * 12)) * 1000).astype(np.int16)
+    dat_content = sig_int16.tobytes()
+
+    # Test Upload with both files
+    files = [
+        ("files", (f"{record_name}.hea", hea_content, "text/plain")),
+        ("files", (f"{record_name}.dat", dat_content, "application/octet-stream")),
+    ]
+    res = client.post("/api/ecg/validate", files=files)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["valid"] is True
+    assert "signal" in data
+    assert len(data["signal"]) == 1000
+    assert len(data["signal"][0]) == 12
+
+    # Test Upload with header only (should fail gracefully and request .dat file)
+    single_hea = [
+        ("files", (f"{record_name}.hea", hea_content, "text/plain")),
+    ]
+    res_missing = client.post("/api/ecg/validate", files=single_hea)
+    assert res_missing.status_code == 400
+    missing_data = res_missing.json()
+    assert ".dat" in missing_data["error"]
+    assert "test_paired_rec.hea" in missing_data["error"]
+
+

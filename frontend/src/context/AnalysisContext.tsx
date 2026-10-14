@@ -94,7 +94,7 @@ interface AnalysisContextType {
   isUploading: boolean
   uploadError: string | null
   isTemporaryAnalysis: boolean
-  uploadAndValidateFile: (file: File, datFile?: File) => Promise<ValidationResponse | null>
+  uploadAndValidateFile: (fileOrFiles: File | File[] | FileList, datFile?: File) => Promise<ValidationResponse | null>
   clearUploadedSignal: () => void
   saveTemporaryToPatient: (patientId: string, assignedClinician?: string) => Promise<ECGStudy | null>
 
@@ -104,7 +104,7 @@ interface AnalysisContextType {
   isExperimenting: boolean
 
   // Actions
-  setSignal: (sig: number[][], meta?: SignalMetadata) => void
+  setSignal: (sig: number[][], meta?: Partial<SignalMetadata>) => void
   runInference: (model?: string, explainClass?: DiagnosticClass) => Promise<AnalysisResponse | null>
   runExplanation: (cls?: DiagnosticClass, method?: string, steps?: number) => Promise<ExplainResponse | null>
   runFaithfulness: (cls?: DiagnosticClass, topFraction?: number) => Promise<FaithfulnessResponse | null>
@@ -206,9 +206,9 @@ export const AnalysisProvider: React.FC<{ children: ReactNode }> = ({ children }
   }, [])
 
   // Invalidate downstream caches when signal or model changes
-  const setSignal = (sig: number[][], meta?: SignalMetadata) => {
+  const setSignal = (sig: number[][], meta?: Partial<SignalMetadata>) => {
     setCurrentSignal(sig)
-    if (meta) setCurrentMetadata(meta)
+    if (meta) setCurrentMetadata(meta as SignalMetadata)
     // Clear dependent results
     setAnalysisResult(null)
     setAttributionResult(null)
@@ -494,7 +494,10 @@ export const AnalysisProvider: React.FC<{ children: ReactNode }> = ({ children }
   }
 
   // Upload & Testing Actions
-  const uploadAndValidateFile = async (file: File, datFile?: File): Promise<ValidationResponse | null> => {
+  const uploadAndValidateFile = async (
+    fileOrFiles: File | File[] | FileList,
+    datFile?: File
+  ): Promise<ValidationResponse | null> => {
     const requestId = ++uploadRequestCounterRef.current
     setIsUploading(true)
     setUploadError(null)
@@ -513,7 +516,7 @@ export const AnalysisProvider: React.FC<{ children: ReactNode }> = ({ children }
     setFullAblationMatrixResult(null)
 
     try {
-      const resp = await validateSignalFile(file, datFile)
+      const resp = await validateSignalFile(fileOrFiles, datFile)
 
       // Prevent race conditions: discard result if a newer upload was started
       if (requestId !== uploadRequestCounterRef.current) {

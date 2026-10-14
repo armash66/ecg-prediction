@@ -126,8 +126,8 @@ export const ECGAnalysisView: React.FC<ECGAnalysisViewProps> = ({
 
   // Handle file drop / upload
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const files = e.target.files ? Array.from(e.target.files) : []
+    if (files.length === 0) return
 
     setIsValidating(true)
     setValidationError(null)
@@ -135,7 +135,7 @@ export const ECGAnalysisView: React.FC<ECGAnalysisViewProps> = ({
     setAnalysisError(null)
 
     try {
-      const resp = await validateSignalFile(file)
+      const resp = await validateSignalFile(files.length > 1 ? files : files[0])
       if (!resp.valid || !resp.signal) {
         throw new Error(resp.error || 'Signal validation failed')
       }
@@ -185,7 +185,7 @@ export const ECGAnalysisView: React.FC<ECGAnalysisViewProps> = ({
   }
 
   return (
-    <div className="page-container">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%' }}>
       {/* Research Disclaimer */}
       <DisclaimerBanner />
 
@@ -196,10 +196,11 @@ export const ECGAnalysisView: React.FC<ECGAnalysisViewProps> = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <label className="btn btn-secondary" style={{ cursor: 'pointer', margin: 0 }}>
               <Upload size={15} />
-              <span>Upload 12-Lead ECG (.csv / .npy / .npz)</span>
+              <span>Upload 12-Lead ECG (.csv / .npy / .npz / .hea + .dat)</span>
               <input
                 type="file"
-                accept=".csv,.npy,.npz,.hea"
+                multiple
+                accept=".csv,.npy,.npz,.hea,.dat"
                 onChange={handleFileUpload}
                 style={{ display: 'none' }}
               />

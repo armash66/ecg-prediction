@@ -142,6 +142,9 @@ class PTBXLDatasetBench:
             }
 
         self._ensure_loaded()
+        if self._meta_df is None or self._fold is None or self._Y is None:
+            raise RuntimeError("Dataset failed to initialize properly.")
+
         f10_count = int(np.sum(self._fold == 10))
         total_count = len(self._meta_df)
 
@@ -197,7 +200,7 @@ class PTBXLDatasetBench:
 
         # Filter by search string
         if search:
-            st = str(search).strip().lower()
+            st = search.strip().lower()
             filtered = []
             for idx in matching_indices:
                 ecg_id_str = str(self._meta_df.index[idx])
@@ -288,7 +291,7 @@ class PTBXLDatasetBench:
         sex_val = "Male" if row["sex"] == 0 else ("Female" if row["sex"] == 1 else "Unknown")
 
         return {
-            "index": int(idx),
+            "index": idx,
             "ecg_id": ecg_id,
             "patient_id": int(row["patient_id"]) if pd.notna(row["patient_id"]) else None,
             "age": age_val,
@@ -437,8 +440,8 @@ class PTBXLDatasetBench:
         for idx, c in enumerate(CLASSES):
             prob = float(probs[idx])
             t = float(thresholds.get(c, 0.5))
-            pred_pos = bool(prob >= t)
-            ref_pos = bool(ref_targets.get(c, 0) == 1)
+            pred_pos = (prob >= t)
+            ref_pos = (ref_targets.get(c, 0) == 1)
 
             if pred_pos and ref_pos:
                 concordance = "TP"

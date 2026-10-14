@@ -52,7 +52,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
 
   if (!metrics) {
     return (
-      <div className="page-container" style={{ alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', width: '100%' }}>
         <div style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>
           <Activity size={32} style={{ animation: 'spin 2s linear infinite', color: 'var(--accent-burgundy)' }} />
           <p style={{ marginTop: '12px', fontSize: '0.9rem' }}>Loading research evaluation metrics...</p>
@@ -74,7 +74,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
   const activeClassMetrics = per_class[selectedModelForClass] || per_class['seq'] || {}
 
   return (
-    <div className="page-container">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%' }}>
       {/* Research Disclaimer */}
       <DisclaimerBanner />
 

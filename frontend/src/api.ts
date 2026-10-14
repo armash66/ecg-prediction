@@ -13,6 +13,7 @@ import {
   Patient,
   PatientCreatePayload,
   ECGStudy,
+  Encounter,
   ClinicalNote,
   ClinicalReport,
   ClinicalOverviewData,
@@ -81,17 +82,39 @@ export async function validateSignalJson(signal: number[][], filename?: string):
   return res.json()
 }
 
-export async function validateSignalFile(file: File, datFile?: File): Promise<ValidationResponse> {
+export async function validateSignalFile(
+  fileOrFiles: File | File[] | FileList,
+  datFile?: File
+): Promise<ValidationResponse> {
   const formData = new FormData()
-  formData.append('file', file)
-  if (datFile) {
-    formData.append('dat_file', datFile)
+
+  if (Array.isArray(fileOrFiles) || (typeof FileList !== 'undefined' && fileOrFiles instanceof FileList)) {
+    const list = Array.from(fileOrFiles)
+    list.forEach((f) => {
+      formData.append('files', f)
+      if (f.name.toLowerCase().endsWith('.hea')) {
+        formData.append('file', f)
+      } else if (f.name.toLowerCase().endsWith('.dat')) {
+        formData.append('dat_file', f)
+      } else {
+        formData.append('file', f)
+      }
+    })
+  } else if (fileOrFiles instanceof File) {
+    formData.append('file', fileOrFiles)
+    if (datFile) {
+      formData.append('dat_file', datFile)
+    }
   }
 
   const res = await fetch(`${BASE_URL}/api/ecg/validate`, {
     method: 'POST',
     body: formData,
   })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || err.error || 'Signal validation failed.')
+  }
   return res.json()
 }
 
@@ -402,6 +425,59 @@ export async function updatePatient(id: string, updates: Partial<Patient>): Prom
 export async function deletePatient(id: string): Promise<void> {
   const res = await fetch(`${BASE_URL}/api/patients/${id}`, { method: 'DELETE' })
   if (!res.ok) throw new Error(`Failed to delete patient: ${res.statusText}`)
+}
+
+export async function fetchEncounters(patientId?: string): Promise<{ total: number; encounters: Encounter[] }> {
+  const params = new URLSearchParams()
+  if (patientId) params.append('patient_id', patientId)
+  const res = await fetch(`${BASE_URL}/api/encounters?${params.toString()}`)
+  if (!res.ok) throw new Error(`Failed to load encounters: ${res.statusText}`)
+  return res.json()
+}
+
+export async function fetchEncounterDetail(encounterId: string): Promise<Encounter & { studies?: ECGStudy[] }> {
+  const res = await fetch(`${BASE_URL}/api/encounters/${encounterId}`)
+  if (!res.ok) throw new Error(`Failed to load encounter ${encounterId}: ${res.statusText}`)
+  return res.json()
+}
+
+export async function createEncounter(data: {
+  patient_id: string
+  encounter_date?: string
+  encounter_type?: string
+  department?: string
+  attending_clinician?: string
+  reason_for_visit?: string
+  status?: string
+}): Promise<Encounter> {
+  const res = await fetch(`${BASE_URL}/api/encounters`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Failed to create encounter')
+  }
+  return res.json()
+}
+
+export async function updateEncounter(encounterId: string, updates: Partial<Encounter>): Promise<Encounter> {
+  const res = await fetch(`${BASE_URL}/api/encounters/${encounterId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Failed to update encounter')
+  }
+  return res.json()
+}
+
+export async function deleteEncounter(encounterId: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/encounters/${encounterId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`Failed to delete encounter: ${res.statusText}`)
 }
 
 export async function fetchStudies(
