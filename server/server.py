@@ -48,50 +48,27 @@ from ecg_intelligence.explainability.deletion_test import compute_faithfulness_c
 from ecg_intelligence.features.extractor import extract_handcrafted_features
 from ecg_intelligence.preprocessing.resampling import ensure_1000x12
 from ecg_intelligence.data.parser import parse_csv_ecg, parse_numpy_ecg, parse_wfdb_record
-try:
-    from server.clinical_db import (
-        init_clinical_db,
-        list_patients,
-        get_patient_detail,
-        create_patient,
-        update_patient,
-        delete_patient,
-        list_ecg_studies,
-        get_ecg_study_detail,
-        create_ecg_study,
-        update_study_status,
-        delete_ecg_study,
-        update_study_analysis_result,
-        get_study_notes,
-        save_study_notes,
-        generate_deterministic_ai_draft,
-        render_clinical_report_html,
-        finalize_study_report,
-        compare_longitudinal_studies,
-        get_clinical_overview,
-    )
-except ImportError:
-    from clinical_db import (
-        init_clinical_db,
-        list_patients,
-        get_patient_detail,
-        create_patient,
-        update_patient,
-        delete_patient,
-        list_ecg_studies,
-        get_ecg_study_detail,
-        create_ecg_study,
-        update_study_status,
-        delete_ecg_study,
-        update_study_analysis_result,
-        get_study_notes,
-        save_study_notes,
-        generate_deterministic_ai_draft,
-        render_clinical_report_html,
-        finalize_study_report,
-        compare_longitudinal_studies,
-        get_clinical_overview,
-    )
+from server.clinical_db import (
+    init_clinical_db,
+    list_patients,
+    get_patient_detail,
+    create_patient,
+    update_patient,
+    delete_patient,
+    list_ecg_studies,
+    get_ecg_study_detail,
+    create_ecg_study,
+    update_study_status,
+    delete_ecg_study,
+    update_study_analysis_result,
+    get_study_notes,
+    save_study_notes,
+    generate_deterministic_ai_draft,
+    render_clinical_report_html,
+    finalize_study_report,
+    compare_longitudinal_studies,
+    get_clinical_overview,
+)
 
 app = FastAPI(
     title="PTB-XL ECG Intelligence API",
@@ -138,10 +115,7 @@ _LAST_INFERENCE_META: Optional[Dict[str, Any]] = None
 # Persistent History Database
 DB_PATH = os.path.join(CACHE_DIR, "analyses_history.db")
 
-try:
-    from server.dataset_bench import PTBXLDatasetBench
-except ImportError:
-    from dataset_bench import PTBXLDatasetBench
+from server.dataset_bench import PTBXLDatasetBench
 DATASET_BENCH = PTBXLDatasetBench(os.path.join(PROJECT_ROOT, "data", "ptbxl"), CACHE_DIR)
 
 
@@ -641,9 +615,10 @@ class ReportFinalizeRequest(BaseModel):
 
 def _dump_model(m: BaseModel) -> dict:
     """Helper to export model dictionary cleanly across Pydantic v1 and v2."""
-    if hasattr(m, "model_dump"):
-        return m.model_dump()
-    return m.dict()
+    model_dump_fn = getattr(m, "model_dump", None)
+    if callable(model_dump_fn):
+        return model_dump_fn()
+    return getattr(m, "dict")()
 
 
 
@@ -1799,7 +1774,7 @@ def list_artifacts():
                     "verified": is_valid,
                     "param_count": param_cnt
                 })
-    return {"artifacts": sorted(items, key=lambda x: x["filename"])}
+    return {"artifacts": sorted(items, key=lambda x: str(x.get("filename", "")))}
 
 
 # ==========================================
@@ -1822,7 +1797,7 @@ def compare_models(req: CompareRequest):
     x_norm = ((sig - ns["mu"]) / ns["sd"]).T[None].astype(np.float32)
     x_tensor = torch.from_numpy(x_norm)
 
-    results = {}
+    results: Dict[str, Any] = {}
     for m in target_models:
         if m not in MODEL_METADATA or not MODEL_METADATA[m].get("checkpoint"):
             continue
@@ -1845,12 +1820,12 @@ def compare_models(req: CompareRequest):
             preds = []
             for i, c in enumerate(CLASSES):
                 p_val = float(probs[i])
-                th = t_map.get(c, 0.5)
+                th = float(t_map.get(c, 0.5))
                 preds.append({
                     "class": c,
                     "probability": p_val,
                     "threshold": th,
-                    "detected": bool(p_val >= th)
+                    "detected": (p_val >= th)
                 })
             results[m] = {
                 "display_name": meta.get("display_name", m),
@@ -1864,10 +1839,14 @@ def compare_models(req: CompareRequest):
     # Compute multi-model agreement
     agreement = {}
     for c in CLASSES:
-        detected_list = [
-            results[m]["probabilities"][c] >= results[m]["predictions"][CLASSES.index(c)]["threshold"]
-            for m in results if "probabilities" in results[m]
-        ]
+        idx = CLASSES.index(c)
+        detected_list = []
+        for m, m_data in results.items():
+            if isinstance(m_data, dict) and "probabilities" in m_data and "predictions" in m_data:
+                probs_map = m_data.get("probabilities", {})
+                preds_list = m_data.get("predictions", [])
+                if c in probs_map and len(preds_list) > idx:
+                    detected_list.append(bool(probs_map[c] >= preds_list[idx]["threshold"]))
         if detected_list:
             pos_ratio = sum(detected_list) / len(detected_list)
             is_unanimous = (pos_ratio == 1.0 or pos_ratio == 0.0)
@@ -1876,7 +1855,7 @@ def compare_models(req: CompareRequest):
                 "total_models": len(detected_list),
                 "agreement_ratio": round(max(pos_ratio, 1.0 - pos_ratio), 2),
                 "unanimous": is_unanimous,
-                "consensus_detected": bool(pos_ratio >= 0.5)
+                "consensus_detected": (pos_ratio >= 0.5)
             }
 
     return {
@@ -2213,6 +2192,9 @@ def api_create_patient(req: PatientCreateRequest):
                 "original_samples": raw_sig.shape[0] if raw_sig is not None else 1000
             }
 
+            if quality is None:
+                quality = analyze_signal_quality(sig)
+
             study = create_ecg_study(
                 db_path=DB_PATH,
                 patient_id_or_uid=patient["id"],
@@ -2435,7 +2417,7 @@ def api_analyze_study(study_id: str, model: Optional[str] = None):
     ))
 
     # Determine binary detected flags
-    flags = [p["class"] for p in analysis["predictions"] if p["detected"]]
+    flags: List[str] = [str(p["class"]) for p in analysis["predictions"] if bool(p.get("detected", False))]
 
     # Persist analysis results into the ecg_studies table
     analysis_key = analysis.get("analysis_id", "")
