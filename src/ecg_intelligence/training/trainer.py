@@ -86,7 +86,7 @@ class PyTorchTrainer:
         # Only overwrite norm.npz if not already existing, or preserve existing
         norm_path = os.path.join(self.cache_dir, 'norm.npz')
         if not os.path.exists(norm_path):
-            np.savez(norm_path, **ns)
+            np.savez(norm_path, mu=ns['mu'], sd=ns['sd'], fm=ns['fm'], fs=ns['fs'])
 
         # Standardise and format tensors
         Xn = normalize_signals(X, ns['mu'], ns['sd'])  # (N, 12, 1000)
@@ -167,9 +167,9 @@ class PyTorchTrainer:
 
             pv, _ = predict_subset(va)
             val_aucs = [roc_auc_score(Y[va][:, i], pv[:, i]) for i in range(5)]
-            val_macro_auc = float(np.mean(val_aucs))
+            val_macro_auc = float(np.mean(np.asarray(val_aucs, dtype=float)))
             val_auprcs = [average_precision_score(Y[va][:, i], pv[:, i]) for i in range(5)]
-            val_macro_auprc = float(np.mean(val_auprcs))
+            val_macro_auprc = float(np.mean(np.asarray(val_auprcs, dtype=float)))
             epoch_loss = running_loss / len(train_idx)
 
             ep_record = {
@@ -216,10 +216,10 @@ class PyTorchTrainer:
         inference_latency_ms = float((time.time() - t_lat_start) / (len(pv) + len(pt)) * 1000.0)
 
         extra_info = {
-            'param_count': int(param_count),
+            'param_count': param_count,
             'training_duration_sec': float(round(training_duration_sec, 2)),
             'inference_latency_ms': float(round(inference_latency_ms, 3)),
-            'best_epoch': int(best_epoch),
+            'best_epoch': best_epoch,
             'aug_mode': self.aug_mode,
             'max_lr': float(self.max_lr),
             'weight_decay': float(self.weight_decay),

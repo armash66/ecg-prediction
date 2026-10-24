@@ -1010,10 +1010,12 @@ async def validate_ecg_upload(request: Request):
 
         elif "multipart/form-data" in content_type:
             form = await request.form()
-            all_uploads = []
+            all_uploads: List[UploadFile] = []
             for k, v in form.multi_items():
-                if hasattr(v, "read") and hasattr(v, "filename"):
+                if isinstance(v, UploadFile):
                     all_uploads.append(v)
+                elif hasattr(v, "read") and hasattr(v, "filename"):
+                    all_uploads.append(v)  # type: ignore
 
             if not all_uploads:
                 raise ValueError("No file uploaded in form submission.")

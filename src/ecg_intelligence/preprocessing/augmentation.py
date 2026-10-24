@@ -33,7 +33,7 @@ def apply_ecg_augmentation(
 
     if mode == 'nonwrapping_shift':
         # Shift without circular wraparound
-        shift = int(np.random.randint(-max_roll, max_roll + 1))
+        shift = np.random.randint(-max_roll, max_roll + 1)
         if shift == 0:
             x_shifted = x
         elif shift > 0:
@@ -50,8 +50,8 @@ def apply_ecg_augmentation(
         return x_shifted + noise
 
     # Default: 'current' (cyclic roll + Gaussian noise)
-    shift = int(np.random.randint(-max_roll, max_roll + 1))
-    x_rolled = torch.roll(x, shifts=shift, dims=2)
+    shift = np.random.randint(-max_roll, max_roll + 1)
+    x_rolled = torch.roll(x, shifts=int(shift), dims=2)
     noise = noise_std * torch.randn_like(x_rolled)
     return x_rolled + noise
 

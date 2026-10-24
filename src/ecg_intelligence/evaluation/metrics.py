@@ -111,7 +111,7 @@ def evaluate_test_metrics(
         with open(res_file, 'w', encoding='utf-8') as f:
             json.dump(res, f, indent=1)
 
-        np.save(probs_file, {'val': p_val, 'test': p_test}, allow_pickle=True)
+        np.save(probs_file, np.asarray({'val': p_val, 'test': p_test}, dtype=object), allow_pickle=True)
         # Save standard predictions.npz
         np.savez(preds_npz, y_val=y_val, p_val=p_val, y_test=y_test, p_test=p_test, p_test_bin=pred_bin_all)
         logger.info(f"Saved evaluation metrics to {res_file} and probabilities to {probs_file}")
